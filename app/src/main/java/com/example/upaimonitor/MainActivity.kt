@@ -2,6 +2,7 @@ package com.example.upaimonitor
 
 import android.Manifest
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -9,7 +10,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import com.example.upaimonitor.ui.theme.UPaiMonitorTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -39,6 +42,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Clean up existing duplicates on app start
+        lifecycleScope.launch {
+            val removedCount = MyApp.repository.removeDuplicates()
+            if (removedCount > 0) {
+                Log.d("MainActivity", "Cleaned up $removedCount duplicate transactions")
+                viewModel.loadTransactions()
+            }
+        }
+
         setContent {
             UPaiMonitorTheme {
                 val scope = rememberCoroutineScope()
@@ -46,12 +59,19 @@ class MainActivity : ComponentActivity() {
                 // Observe LiveData emitted when new SMS transactions are detected
                 val newTransaction by MyApp.repository.newTransactionLiveData.observeAsState()
 
-                // When a new SMS is detected, store it persistently
+                // When a new SMS is detected, check for duplicates before storing
                 LaunchedEffect(newTransaction) {
                     newTransaction?.let { txn ->
-                        viewModel.addNewTransaction(txn)
-                        scope.launch {
-                            MyApp.repository.insert(txn)
+                        // Check for duplicates before inserting
+                        val isDuplicate = MyApp.repository.isDuplicateTransaction(txn)
+
+                        if (!isDuplicate) {
+                            viewModel.addNewTransaction(txn)
+                            scope.launch {
+                                MyApp.repository.insert(txn)
+                            }
+                        } else {
+                            Log.d("MainActivity", "Duplicate transaction detected and skipped")
                         }
                         MyApp.repository.clearNewTransaction()
                     }
@@ -104,11 +124,17 @@ fun PermissionScreen(onGrant: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("SMS Permission Required", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(
+            text = "SMS Permission Required",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Text("This app needs to read your SMS messages to track banking transactions.")
         Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onGrant) { Text("Grant Permission") }
+        Button(onClick = onGrant) {
+            Text("Grant Permission")
+        }
     }
 }
 
@@ -140,53 +166,19 @@ fun UPaiDashboard(
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            MonitoringCard(monitoringActive = monitoringActive, onCheckedChange = { monitoringActive = it })
+            MonitoringCard(
+                monitoringActive = monitoringActive,
+                onCheckedChange = { monitoringActive = it }
+            )
             Spacer(modifier = Modifier.height(16.dp))
             DashboardSummary(transactions)
             Spacer(modifier = Modifier.height(16.dp))
-            QuickActions(onTransactionsClick = onTransactionsClick, onSmsMonitorsClick = onSmsMonitorsClick)
+            QuickActions(
+                onTransactionsClick = onTransactionsClick,
+                onSmsMonitorsClick = onSmsMonitorsClick
+            )
             Spacer(modifier = Modifier.height(16.dp))
             RecentTransactions(transactions)
-        }
-    }
-}
-
-@Composable
-fun RecentTransactions(transactions: List<Transaction>) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text("Recent Transactions", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(8.dp))
-        if (transactions.isEmpty()) {
-            Text("No transactions found yet. Add SMS monitors to start tracking.")
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(transactions.take(5), key = { it.transactionId }) { transaction ->
-                    TransactionItem(transaction)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun TransactionItem(transaction: Transaction) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(text = "-₹${transaction.amount}", color = Color.Red, fontSize = 20.sp)
-                Text(text = "From: ${transaction.sender}", fontSize = 14.sp, color = Color.Gray)
-                Text(text = transaction.timestamp, fontSize = 12.sp, color = Color.Gray)
-            }
-            Icon(Icons.Default.CheckCircle, contentDescription = "Synced", tint = Color.Green)
         }
     }
 }
@@ -198,33 +190,56 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column {
                 Text("Monitoring Active", fontWeight = FontWeight.Bold)
-                Text("UPI transactions are being tracked", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "UPI transactions are being tracked",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-            Switch(checked = monitoringActive, onCheckedChange = onCheckedChange)
+            Switch(
+                checked = monitoringActive,
+                onCheckedChange = onCheckedChange
+            )
         }
     }
 }
 
 @Composable
 fun DashboardSummary(transactions: List<Transaction>) {
-    val totalAmount = transactions.sumOf { it.amount }
+    // Calculate net total: credits (+) minus debits (-)
+    val totalAmount = transactions.sumOf { transaction ->
+        if (transaction.isCredit()) {
+            transaction.amount  // Add credits
+        } else {
+            -transaction.amount  // Subtract debits
+        }
+    }
+
+    val totalColor = if (totalAmount >= 0) Color.Green else Color.Red
+    val totalPrefix = if (totalAmount >= 0) "+" else ""
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceAround
     ) {
         SummaryCard("Transactions", transactions.size.toString())
-        SummaryCard("Total", "₹${"%.2f".format(totalAmount)}")
+        SummaryCard(
+            "Net Total",
+            "$totalPrefix₹${"%.2f".format(totalAmount)}",
+            valueColor = totalColor
+        )
     }
 }
 
 @Composable
-fun SummaryCard(title: String, value: String) {
+fun SummaryCard(title: String, value: String, valueColor: Color = Color.Unspecified) {
     Card(
         modifier = Modifier.size(width = 150.dp, height = 80.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -234,7 +249,12 @@ fun SummaryCard(title: String, value: String) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Text(text = value, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = value,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = valueColor
+            )
             Text(text = title, fontSize = 14.sp)
         }
     }
@@ -250,9 +270,81 @@ fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit
             Text("Quick Actions", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onTransactionsClick) { Text("Transactions") }
-                Button(onClick = onSmsMonitorsClick) { Text("SMS Monitors") }
+                Button(onClick = onTransactionsClick) {
+                    Text("Transactions")
+                }
+                Button(onClick = onSmsMonitorsClick) {
+                    Text("SMS Monitors")
+                }
             }
+        }
+    }
+}
+
+@Composable
+fun RecentTransactions(transactions: List<Transaction>) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Recent Transactions",
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleLarge
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        if (transactions.isEmpty()) {
+            Text("No transactions found yet. Add SMS monitors to start tracking.")
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(transactions.take(5), key = { it.transactionId }) { transaction ->
+                    TransactionItem(transaction)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TransactionItem(transaction: Transaction) {
+    val isCredit = transaction.isCredit()
+    val amountColor = if (isCredit) Color.Green else Color.Red
+    val amountPrefix = if (isCredit) "+" else "-"
+    val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
+    val arrowTint = if (isCredit) Color.Green else Color.Red
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = "$amountPrefix₹${transaction.amount}",
+                    color = amountColor,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "From: ${transaction.sender}",
+                    fontSize = 14.sp,
+                    color = Color.Gray
+                )
+                Text(
+                    text = transaction.timestamp,
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+            }
+            Icon(
+                imageVector = arrowIcon,
+                contentDescription = if (isCredit) "Credit" else "Debit",
+                tint = arrowTint,
+                modifier = Modifier.size(32.dp)
+            )
         }
     }
 }
@@ -262,9 +354,23 @@ fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit
 fun DefaultPreview() {
     UPaiMonitorTheme {
         val dummyTransactions = listOf(
-            Transaction(transactionId = "1", amount = 90.0, sender = "AX-FEDBNK-S", timestamp = "Oct 10, 07:42 PM"),
-            Transaction(transactionId = "2", amount = 55.0, sender = "VM-HDFCBK", timestamp = "Oct 10, 01:01 PM")
+            Transaction(
+                transactionId = "1",
+                amount = 90.0,
+                sender = "AX-FEDBNK-S",
+                timestamp = "Oct 10, 07:42 PM"
+            ),
+            Transaction(
+                transactionId = "2",
+                amount = 55.0,
+                sender = "VM-HDFCBK",
+                timestamp = "Oct 10, 01:01 PM"
+            )
         )
-        UPaiDashboard(transactions = dummyTransactions, onTransactionsClick = {}, onSmsMonitorsClick = {})
+        UPaiDashboard(
+            transactions = dummyTransactions,
+            onTransactionsClick = {},
+            onSmsMonitorsClick = {}
+        )
     }
 }
