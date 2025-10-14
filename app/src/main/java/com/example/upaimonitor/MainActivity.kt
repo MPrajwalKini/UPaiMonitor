@@ -430,7 +430,7 @@ fun RecentTransactions(transactions: List<Transaction>) {
 
 //@Composable
 //fun RecentTransactions(transactions: List<Transaction>) {
-//    // 🕒 Filter only today's transactions
+//    // Filter only today's transactions
 //    val todayTransactions = transactions.filter { transaction ->
 //        isToday(transaction.timestamp)
 //    }
