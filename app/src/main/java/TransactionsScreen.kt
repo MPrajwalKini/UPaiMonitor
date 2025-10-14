@@ -95,7 +95,10 @@ fun TransactionsScreen(
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(transactions, key = { it.transactionId }) { transaction ->
+                    items(
+                        transactions.sortedByDescending { it.transactionId },
+                        key = { it.transactionId }
+                    ) { transaction ->
                         DetailedTransactionItem(transaction)
                     }
                 }

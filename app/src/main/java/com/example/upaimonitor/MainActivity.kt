@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.CheckCircle
 import android.content.Context
 import androidx.compose.ui.platform.LocalContext
-
+import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -224,8 +224,10 @@ fun UPaiDashboard(
 
                     if (isActive) {
                         SmsReceiver.register(context)
+                        Toast.makeText(context, "Monitoring enabled", Toast.LENGTH_SHORT).show()
                     } else {
                         SmsReceiver.unregister(context)
+                        Toast.makeText(context, "Monitoring disabled", Toast.LENGTH_SHORT).show()
                     }
                 }
             )
@@ -420,8 +422,8 @@ fun RecentTransactions(transactions: List<Transaction>) {
             Text("No transactions found yet. Add SMS monitors to start tracking.")
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(transactions.take(5), key = { it.transactionId }) { transaction ->
-                    TransactionItem(transaction)
+                items(transactions.sortedByDescending { it.transactionId }.take(5), key = { it.transactionId }) { transaction ->
+                TransactionItem(transaction)
                 }
             }
         }

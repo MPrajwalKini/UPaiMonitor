@@ -151,6 +151,8 @@ class SmsReceiver : BroadcastReceiver() {
             } catch (e: Exception) {
                 Log.e("SmsReceiver", "Error unregistering receiver", e)
             }
+            isRegistered = false
+            receiverInstance = null
         }
     }
 }
