@@ -20,7 +20,7 @@ class SmsReceiver : BroadcastReceiver() {
 
         val bundle: Bundle? = intent.extras
         try {
-            val pdus = bundle?.get("pdus") as? Array<*>
+            val pdus = bundle?.getSerializable("pdus") as? Array<*>
             if (pdus.isNullOrEmpty()) {
                 Log.e("SmsReceiver", "SMS bundle is null or empty")
                 return
