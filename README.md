@@ -26,7 +26,7 @@ UPai Monitor is an Android app that scans incoming SMS messages for payment/UPI 
 
 1. Clone the repository:
    ```bash
-   git clone <repo-url>
+   git clone [<repo-url>](https://github.com/MPrajwalKini/UPaiMonitor.git)
    ```
 2. Open the project in Android Studio.
 3. Let Android Studio sync and download dependencies (Gradle sync).
