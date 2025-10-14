@@ -18,25 +18,33 @@ class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != "android.provider.Telephony.SMS_RECEIVED") return
 
-        val bundle: Bundle? = intent.extras
+        val bundle = intent.extras
         try {
-            val pdus = bundle?.getSerializable("pdus") as? Array<*>
+            // Safe PDU extraction (works on all SDKs)
+            val pdus = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                bundle?.getParcelableArray("pdus", ByteArray::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                bundle?.get("pdus") as? Array<*>
+            }
+
             if (pdus.isNullOrEmpty()) {
                 Log.e("SmsReceiver", "SMS bundle is null or empty")
                 return
             }
 
+            val format = bundle?.getString("format")
             val messages = Array(pdus.size) { i ->
-                SmsMessage.createFromPdu(pdus[i] as ByteArray, bundle.getString("format"))
+                SmsMessage.createFromPdu(pdus[i] as ByteArray, format)
             }
 
-            val messageBody = messages.joinToString("") { it?.messageBody ?: "" }
+            val messageBody = messages.joinToString("") { it.messageBody ?: "" }
             val sender = messages.firstOrNull()?.displayOriginatingAddress ?: "Unknown"
             val timestamp = messages.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
 
             Log.d("SmsReceiver", "Received SMS from $sender: $messageBody")
 
-            // Filter: only monitored senders
+            // Filter monitored senders
             val monitored = SmsMonitorManager.getMonitorsSynchronously(context)
             if (monitored.none { sender.contains(it, ignoreCase = true) }) {
                 Log.d("SmsReceiver", "Sender $sender not in monitored list — ignored")
@@ -54,13 +62,11 @@ class SmsReceiver : BroadcastReceiver() {
                 "credited", "received", "added", "got", "deposit", "incoming", "upi credit"
             ).any { it in lowerMsg }
 
-            // Skip pure balance messages
             if (!isDebit && !isCredit) {
                 Log.d("SmsReceiver", "Ignored balance/info message (no txn keywords)")
                 return
             }
 
-            // Extract amount
             val regex = Regex("""(?i)(?:Rs\.?|INR|₹)\s*([0-9,]+(?:\.\d{1,2})?)""")
             val match = regex.find(messageBody)
             val amount = match?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()
@@ -69,14 +75,10 @@ class SmsReceiver : BroadcastReceiver() {
                 return
             }
 
-            // Extract unique reference number
             val upiRef = extractUpiReference(messageBody)
             val transactionId = upiRef ?: "T${timestamp}_${sender.hashCode()}"
-
-            // Use consistent timestamp (includes year!)
             val formattedTime = SimpleDateFormat("MMM dd yyyy, hh:mm a", Locale.getDefault())
                 .format(Date(timestamp))
-
             val transactionType = if (isCredit) TransactionType.CREDIT else TransactionType.DEBIT
 
             val transaction = Transaction(
@@ -90,7 +92,6 @@ class SmsReceiver : BroadcastReceiver() {
 
             Log.d("SmsReceiver", "Parsed $transactionType transaction: $transaction")
 
-            // Post and save (avoiding duplicates via Repository)
             MyApp.repository.postNewTransaction(transaction)
             CoroutineScope(Dispatchers.IO).launch {
                 if (!MyApp.repository.isDuplicateTransaction(transaction)) {
@@ -104,6 +105,7 @@ class SmsReceiver : BroadcastReceiver() {
             Log.e("SmsReceiver", "Error reading SMS", e)
         }
     }
+
 
     /** Extract UPI or reference number from text */
     private fun extractUpiReference(message: String): String? {
