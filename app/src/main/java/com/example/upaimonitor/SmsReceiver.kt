@@ -10,8 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
 class SmsReceiver : BroadcastReceiver() {
 
@@ -30,55 +29,53 @@ class SmsReceiver : BroadcastReceiver() {
                 SmsMessage.createFromPdu(pdus[i] as ByteArray, bundle.getString("format"))
             }
 
-            val messageBody = messages.joinToString(separator = "") { it?.messageBody ?: "" }
+            val messageBody = messages.joinToString("") { it?.messageBody ?: "" }
             val sender = messages.firstOrNull()?.displayOriginatingAddress ?: "Unknown"
             val timestamp = messages.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
 
             Log.d("SmsReceiver", "Received SMS from $sender: $messageBody")
 
-            // --- Filter senders based on monitored IDs ---
+            // Filter: only monitored senders
             val monitored = SmsMonitorManager.getMonitorsSynchronously(context)
             if (monitored.none { sender.contains(it, ignoreCase = true) }) {
-                Log.d("SmsReceiver", "Sender $sender not in monitored list. Ignored.")
+                Log.d("SmsReceiver", "Sender $sender not in monitored list — ignored")
                 return
             }
 
             val lowerMsg = messageBody.lowercase(Locale.getDefault())
 
-            // --- Identify if debit or credit ---
             val isDebit = listOf(
-                "debited", "spent", "withdrawn", "purchased", "paid", "sent", "transfer to", "upi debit"
+                "debited", "spent", "withdrawn", "purchased", "paid", "sent",
+                "transfer to", "upi debit"
             ).any { it in lowerMsg }
 
             val isCredit = listOf(
                 "credited", "received", "added", "got", "deposit", "incoming", "upi credit"
             ).any { it in lowerMsg }
 
-            // Skip if it's ONLY a balance inquiry (no transaction keywords)
+            // Skip pure balance messages
             if (!isDebit && !isCredit) {
-                Log.d("SmsReceiver", "No transaction keywords found. Likely balance-only message. Ignored.")
+                Log.d("SmsReceiver", "Ignored balance/info message (no txn keywords)")
                 return
             }
 
-            // --- Extract amount ---
+            // Extract amount
             val regex = Regex("""(?i)(?:Rs\.?|INR|₹)\s*([0-9,]+(?:\.\d{1,2})?)""")
             val match = regex.find(messageBody)
             val amount = match?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()
-
             if (amount == null || amount <= 0.0) {
-                Log.d("SmsReceiver", "Invalid amount in SMS: $messageBody")
+                Log.d("SmsReceiver", "Invalid or missing amount — skipped")
                 return
             }
 
-            // --- Extract unique UPI reference ---
+            // Extract unique reference number
             val upiRef = extractUpiReference(messageBody)
             val transactionId = upiRef ?: "T${timestamp}_${sender.hashCode()}"
 
-            // --- Format timestamp properly ---
-            val formattedTime = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
+            // Use consistent timestamp (includes year!)
+            val formattedTime = SimpleDateFormat("MMM dd yyyy, hh:mm a", Locale.getDefault())
                 .format(Date(timestamp))
 
-            // --- Determine transaction type ---
             val transactionType = if (isCredit) TransactionType.CREDIT else TransactionType.DEBIT
 
             val transaction = Transaction(
@@ -90,12 +87,16 @@ class SmsReceiver : BroadcastReceiver() {
                 transactionType = transactionType.name
             )
 
-            Log.d("SmsReceiver", "Transaction created: $transaction (Type: $transactionType)")
+            Log.d("SmsReceiver", "Parsed $transactionType transaction: $transaction")
 
-            // --- Store transaction safely ---
+            // Post and save (avoiding duplicates via Repository)
             MyApp.repository.postNewTransaction(transaction)
             CoroutineScope(Dispatchers.IO).launch {
-                MyApp.repository.insert(transaction)
+                if (!MyApp.repository.isDuplicateTransaction(transaction)) {
+                    MyApp.repository.insert(transaction)
+                } else {
+                    Log.d("SmsReceiver", "Duplicate transaction skipped: $transactionId")
+                }
             }
 
         } catch (e: Exception) {
@@ -103,19 +104,18 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
 
-    /**
-     * Extracts a unique UPI or reference number from message text.
-     */
+    /** Extract UPI or reference number from text */
     private fun extractUpiReference(message: String): String? {
         return try {
             val patterns = listOf(
-                """UPI\s*Ref(?:\s*No)?[:\s]*(\w+)""".toRegex(RegexOption.IGNORE_CASE),
-                """UPI/(\w+)""".toRegex(),
-                """Ref(?:\s*No)?[:\s]*(\w+)""".toRegex(RegexOption.IGNORE_CASE),
-                """UTR[:\s]*(\w+)""".toRegex(RegexOption.IGNORE_CASE),
-                """Transaction\s*ID[:\s]*(\w+)""".toRegex(RegexOption.IGNORE_CASE),
-                """Txn\s*(?:ID|No)[:\s]*(\w+)""".toRegex(RegexOption.IGNORE_CASE)
-            )
+                """UPI\s*Ref(?:\s*No)?[:\s]*(\w+)""",
+                """UPI/(\w+)""",
+                """Ref(?:\s*No)?[:\s]*(\w+)""",
+                """UTR[:\s]*(\w+)""",
+                """Transaction\s*ID[:\s]*(\w+)""",
+                """Txn\s*(?:ID|No)[:\s]*(\w+)"""
+            ).map { it.toRegex(RegexOption.IGNORE_CASE) }
+
             patterns.firstNotNullOfOrNull { it.find(message)?.groupValues?.get(1) }?.let {
                 "UPI$it"
             }

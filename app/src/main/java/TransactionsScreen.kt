@@ -160,7 +160,7 @@ fun DetailedTransactionItem(transaction: Transaction) {
     val amountColor = if (isCredit) Color(0xFF4CAF50) else Color(0xFFE53935)
     val amountPrefix = if (isCredit) "+" else "-"
     val backgroundColor = if (isCredit) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color(0xFFE53935).copy(alpha = 0.1f)
-    val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp
+    val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
 
     Card(
         modifier = Modifier.fillMaxWidth(),
