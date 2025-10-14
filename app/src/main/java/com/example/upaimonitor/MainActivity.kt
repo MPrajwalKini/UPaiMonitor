@@ -30,6 +30,9 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.CheckCircle
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
+
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -177,7 +180,22 @@ fun UPaiDashboard(
     onTransactionsClick: () -> Unit,
     onSmsMonitorsClick: () -> Unit
 ) {
-    var monitoringActive by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    // Persisted state
+    var monitoringActive by remember {
+        mutableStateOf(prefs.getBoolean("monitoring_active", false))
+    }
+
+    // Automatically register or unregister based on saved preference
+    LaunchedEffect(monitoringActive) {
+        if (monitoringActive) {
+            SmsReceiver.register(context)
+        } else {
+            SmsReceiver.unregister(context)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -200,8 +218,18 @@ fun UPaiDashboard(
         ) {
             MonitoringCard(
                 monitoringActive = monitoringActive,
-                onCheckedChange = { monitoringActive = it }
+                onCheckedChange = { isActive ->
+                    monitoringActive = isActive
+                    prefs.edit().putBoolean("monitoring_active", isActive).apply()
+
+                    if (isActive) {
+                        SmsReceiver.register(context)
+                    } else {
+                        SmsReceiver.unregister(context)
+                    }
+                }
             )
+
             Spacer(modifier = Modifier.height(16.dp))
             DashboardSummary(transactions)
             Spacer(modifier = Modifier.height(16.dp))

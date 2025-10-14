@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.telephony.SmsMessage
 import android.util.Log
+import android.content.IntentFilter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -122,6 +123,34 @@ class SmsReceiver : BroadcastReceiver() {
         } catch (e: Exception) {
             Log.e("SmsReceiver", "Error extracting UPI reference", e)
             null
+        }
+    }
+    companion object {
+        private var isRegistered = false
+        private var receiverInstance: SmsReceiver? = null
+
+        /** Dynamically register SMS receiver */
+        fun register(context: Context) {
+            if (isRegistered) return
+            val receiver = SmsReceiver()
+            val filter = IntentFilter("android.provider.Telephony.SMS_RECEIVED")
+            context.registerReceiver(receiver, filter)
+            receiverInstance = receiver
+            isRegistered = true
+            Log.d("SmsReceiver", "SMS monitoring started")
+        }
+
+        /** Unregister SMS receiver */
+        fun unregister(context: Context) {
+            if (!isRegistered || receiverInstance == null) return
+            try {
+                context.unregisterReceiver(receiverInstance)
+                isRegistered = false
+                receiverInstance = null
+                Log.d("SmsReceiver", "SMS monitoring stopped")
+            } catch (e: Exception) {
+                Log.e("SmsReceiver", "Error unregistering receiver", e)
+            }
         }
     }
 }
