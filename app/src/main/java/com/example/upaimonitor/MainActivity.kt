@@ -29,37 +29,6 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.launch
-import androidx.compose.material.icons.filled.CheckCircle
-import android.content.Context
-import androidx.compose.ui.platform.LocalContext
-import android.widget.Toast
-//import java.text.SimpleDateFormat
-//import java.util.*
-
-// Helper: checks if a transaction timestamp is from today
-//fun isToday(timestamp: String): Boolean {
-//    return try {
-//        val formats = listOf(
-//            SimpleDateFormat("MMM dd yyyy, hh:mm a", Locale.getDefault()),
-//            SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault()),
-//            SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault())
-//        )
-//
-//        val transactionDate = formats.firstNotNullOfOrNull { fmt ->
-//            runCatching { fmt.parse(timestamp) }.getOrNull()
-//        } ?: return false
-//
-//        val today = Calendar.getInstance()
-//        val txnCalendar = Calendar.getInstance().apply { time = transactionDate }
-//
-//        today.get(Calendar.YEAR) == txnCalendar.get(Calendar.YEAR) &&
-//                today.get(Calendar.DAY_OF_YEAR) == txnCalendar.get(Calendar.DAY_OF_YEAR)
-//    } catch (e: Exception) {
-//        false
-//    }
-//}
-
-
 
 // Navigation sealed class
 sealed class Screen {
@@ -126,10 +95,6 @@ fun AppContent(viewModel: TransactionViewModel) {
     val transactions by viewModel.transactions.collectAsState()
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
 
-    androidx.activity.compose.BackHandler(enabled = currentScreen != Screen.Dashboard) {
-        currentScreen = Screen.Dashboard
-    }
-
     if (smsPermissionState.status.isGranted) {
         when (currentScreen) {
             Screen.Dashboard -> UPaiDashboard(
@@ -180,22 +145,7 @@ fun UPaiDashboard(
     onTransactionsClick: () -> Unit,
     onSmsMonitorsClick: () -> Unit
 ) {
-    val context = LocalContext.current
-    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-
-    // Persisted state
-    var monitoringActive by remember {
-        mutableStateOf(prefs.getBoolean("monitoring_active", false))
-    }
-
-    // Automatically register or unregister based on saved preference
-    LaunchedEffect(monitoringActive) {
-        if (monitoringActive) {
-            SmsReceiver.register(context)
-        } else {
-            SmsReceiver.unregister(context)
-        }
-    }
+    var monitoringActive by remember { mutableStateOf(true) }
 
     Scaffold(
         topBar = {
@@ -218,20 +168,8 @@ fun UPaiDashboard(
         ) {
             MonitoringCard(
                 monitoringActive = monitoringActive,
-                onCheckedChange = { isActive ->
-                    monitoringActive = isActive
-                    prefs.edit().putBoolean("monitoring_active", isActive).apply()
-
-                    if (isActive) {
-                        SmsReceiver.register(context)
-                        Toast.makeText(context, "Monitoring enabled", Toast.LENGTH_SHORT).show()
-                    } else {
-                        SmsReceiver.unregister(context)
-                        Toast.makeText(context, "Monitoring disabled", Toast.LENGTH_SHORT).show()
-                    }
-                }
+                onCheckedChange = { monitoringActive = it }
             )
-
             Spacer(modifier = Modifier.height(16.dp))
             DashboardSummary(transactions)
             Spacer(modifier = Modifier.height(16.dp))
@@ -249,14 +187,7 @@ fun UPaiDashboard(
 fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (monitoringActive) {
-                Color(0xFF4CAF50).copy(alpha = 0.1f) // Light green when active
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            }
-        )
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Row(
             modifier = Modifier
@@ -265,46 +196,13 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                // Status indicator icon
-                Surface(
-                    shape = MaterialTheme.shapes.small,
-                    color = if (monitoringActive) Color(0xFF4CAF50) else Color.Gray,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column {
-                    Text(
-                        text = "Monitoring ${if (monitoringActive) "Active" else "Inactive"}",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Text(
-                        text = if (monitoringActive) {
-                            "UPI transactions are being tracked"
-                        } else {
-                            "Enable to track UPI transactions"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            Column {
+                Text("Monitoring Active", fontWeight = FontWeight.Bold)
+                Text(
+                    "UPI transactions are being tracked",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-
             Switch(
                 checked = monitoringActive,
                 onCheckedChange = onCheckedChange
@@ -329,52 +227,35 @@ fun DashboardSummary(transactions: List<Transaction>) {
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.SpaceAround
     ) {
+        SummaryCard("Transactions", transactions.size.toString())
         SummaryCard(
-            title = "Transactions",
-            value = transactions.size.toString(),
-            modifier = Modifier.weight(1f)
-        )
-        SummaryCard(
-            title = "Net Total",
-            value = "$totalPrefix₹${"%.2f".format(totalAmount)}",
-            valueColor = totalColor,
-            modifier = Modifier.weight(1f)
+            "Net Total",
+            "$totalPrefix₹${"%.2f".format(totalAmount)}",
+            valueColor = totalColor
         )
     }
 }
 
 @Composable
-fun SummaryCard(
-    title: String,
-    value: String,
-    valueColor: Color = Color.Unspecified,
-    modifier: Modifier = Modifier
-) {
+fun SummaryCard(title: String, value: String, valueColor: Color = Color.Unspecified) {
     Card(
-        modifier = modifier.height(100.dp),
+        modifier = Modifier.size(width = 150.dp, height = 80.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
+            modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Text(
                 text = value,
-                fontSize = 24.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (valueColor != Color.Unspecified) valueColor else MaterialTheme.colorScheme.onSurface
+                color = valueColor
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = title,
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(text = title, fontSize = 14.sp)
         }
     }
 }
@@ -388,20 +269,11 @@ fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Quick Actions", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(
-                    onClick = onTransactionsClick,
-                    modifier = Modifier.weight(1f)
-                ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onTransactionsClick) {
                     Text("Transactions")
                 }
-                Button(
-                    onClick = onSmsMonitorsClick,
-                    modifier = Modifier.weight(1f)
-                ) {
+                Button(onClick = onSmsMonitorsClick) {
                     Text("SMS Monitors")
                 }
             }
@@ -422,45 +294,13 @@ fun RecentTransactions(transactions: List<Transaction>) {
             Text("No transactions found yet. Add SMS monitors to start tracking.")
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(transactions.sortedByDescending { it.transactionId }.take(5), key = { it.transactionId }) { transaction ->
-                TransactionItem(transaction)
+                items(transactions.take(5), key = { it.transactionId }) { transaction ->
+                    TransactionItem(transaction)
                 }
             }
         }
     }
 }
-
-//@Composable
-//fun RecentTransactions(transactions: List<Transaction>) {
-//    // Filter only today's transactions
-//    val todayTransactions = transactions.filter { transaction ->
-//        isToday(transaction.timestamp)
-//    }
-//
-//    Column(modifier = Modifier.fillMaxWidth()) {
-//        Text(
-//            "Today's Transactions",
-//            fontWeight = FontWeight.Bold,
-//            style = MaterialTheme.typography.titleLarge
-//        )
-//        Spacer(modifier = Modifier.height(8.dp))
-//
-//        if (todayTransactions.isEmpty()) {
-//            Text(
-//                "No transactions today.",
-//                color = Color.Gray,
-//                style = MaterialTheme.typography.bodyMedium
-//            )
-//        } else {
-//            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-//                items(todayTransactions.take(5), key = { it.transactionId }) { transaction ->
-//                    TransactionItem(transaction)
-//                }
-//            }
-//        }
-//    }
-//}
-
 
 @Composable
 fun TransactionItem(transaction: Transaction) {
