@@ -28,7 +28,6 @@ class SmsReceiver : BroadcastReceiver() {
                 SmsMessage.createFromPdu(pdus[i] as ByteArray, bundle.getString("format"))
             }
 
-            // Combine multipart message text
             val messageBody = buildString {
                 for (msg in messages) append(msg?.messageBody)
             }
@@ -36,12 +35,19 @@ class SmsReceiver : BroadcastReceiver() {
             val sender = messages.firstOrNull()?.displayOriginatingAddress ?: "Unknown"
             val timestamp = messages.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
 
-            Log.d("SmsReceiver", "Received SMS from $sender: $messageBody")
+            // 🔹 Normalize the sender to core bank ID (e.g., "CANBNK" from "VA-CANBNK-S")
+            val normalizedSender = SmsScanner.run {
+                extractBankSender(normalizeAddress(sender))
+            }
+
+            Log.d("SmsReceiver", "Received SMS from $sender (normalized: $normalizedSender): $messageBody")
 
             // Filter only messages from monitored senders
             val monitored = SmsMonitorManager.getMonitorsSynchronously(context)
-            if (monitored.none { sender.contains(it, ignoreCase = true) }) {
-                Log.d("SmsReceiver", "Sender $sender not in monitored list. Ignored.")
+            val bankCode = SmsScanner.extractBankSender(normalizedSender)
+
+            if (monitored.none { bankCode.contains(it, ignoreCase = true) || it.contains(bankCode, ignoreCase = true) }) {
+                Log.d("SmsReceiver", "Sender $sender (normalized: $bankCode) not in monitored list. Ignored.")
                 return
             }
 
@@ -50,18 +56,16 @@ class SmsReceiver : BroadcastReceiver() {
             val match = regex.find(messageBody)
             val amount = match?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull() ?: 0.0
 
-            // Extract UPI reference number for duplicate detection
             val upiRef = extractUpiReference(messageBody)
 
             Log.d("SmsReceiver", "Amount: $amount, UPI Ref: $upiRef")
 
-            // If valid, push transaction to repository
             if (amount > 0) {
                 val transactionId = upiRef ?: "T${timestamp}"
                 val transaction = Transaction(
                     transactionId = transactionId,
                     amount = amount,
-                    sender = sender,
+                    sender = normalizedSender, // ✅ Store normalized name
                     timestamp = formatTimestamp(timestamp),
                     message = messageBody
                 )
@@ -105,12 +109,6 @@ class SmsReceiver : BroadcastReceiver() {
     private fun formatTimestamp(timestamp: Long): String {
         val date = Date(timestamp)
         val format = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-        // Current format: "Nov 13, 02:35 PM"
-        SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-
-// Other options:
-        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())  // 13/11/2024 14:35
-        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())  // 2024-11-13 14:35
         return format.format(date)
     }
 }

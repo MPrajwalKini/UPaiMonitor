@@ -23,23 +23,23 @@ object SmsScanner {
 
     private val BANK_NAMES = mapOf(
         "HDFC" to listOf("HDFCBK", "HDFC", "HDFCBANK"),
-        "SBI" to listOf("SBIINB", "SBICRD", "SBI", "STbank"),
+        "SBI" to listOf("SBIINB", "SBICRD", "SBI", "STBANK"),
         "ICICI" to listOf("ICICIB", "ICICI", "ICICIBK"),
         "AXIS" to listOf("AXISBK", "AXIS"),
-        "Kotak" to listOf("KOTAKB", "KOTAK"),
+        "KOTAK" to listOf("KOTAKB", "KOTAK"),
         "PNB" to listOf("PNBSMS", "PNB"),
         "BOB" to listOf("BOBTXN", "BOB"),
-        "Canara" to listOf("CBSMS", "CANARA","CANBNK"),
+        "CANARA" to listOf("CBSMS", "CANARA", "CANBNK"),
         "NKGSB" to listOf("NKGSB"),
-        "Union" to listOf("UBISMS", "UNION"),
+        "UNION" to listOf("UBISMS", "UNION"),
         "IDBI" to listOf("IDBIBN", "IDBI"),
-        "Federal" to listOf("FEDBNK", "FEDBK"),
-        "IndusInd" to listOf("INDBNK", "INDUS"),
-        "YES Bank" to listOf("YESBK", "YES"),
-        "PayTM" to listOf("PAYTM"),
-        "PhonePe" to listOf("PHONPE", "PHNPE"),
-        "Google Pay" to listOf("GPAY", "GOOGLEPAY"),
-        "Amazon Pay" to listOf("AMAZON", "AZNPAY")
+        "FEDERAL" to listOf("FEDBNK", "FEDBK"),
+        "INDUSIND" to listOf("INDBNK", "INDUS"),
+        "YES BANK" to listOf("YESBK", "YES"),
+        "PAYTM" to listOf("PAYTM"),
+        "PHONEPE" to listOf("PHONPE", "PHNPE"),
+        "GOOGLE PAY" to listOf("GPAY", "GOOGLEPAY"),
+        "AMAZON PAY" to listOf("AMAZON", "AZNPAY")
     )
 
     /**
@@ -55,7 +55,7 @@ object SmsScanner {
                 arrayOf("address", "body", "date"),
                 null,
                 null,
-                "date DESC LIMIT 1000" // Scan last 1000 messages
+                "date DESC LIMIT 1000"
             )
 
             cursor?.use {
@@ -68,19 +68,21 @@ object SmsScanner {
                     val body = it.getString(bodyIndex) ?: continue
                     val date = it.getLong(dateIndex)
 
-                    // Check if this looks like a banking SMS
                     if (isBankingMessage(body)) {
                         val normalizedAddress = normalizeAddress(address)
 
-                        if (detectedSenders.containsKey(normalizedAddress)) {
-                            detectedSenders[normalizedAddress]!!.count++
-                            // Keep the most recent message as sample
-                            if (date > detectedSenders[normalizedAddress]!!.lastReceived) {
-                                detectedSenders[normalizedAddress]!!.sampleMessage = body
-                                detectedSenders[normalizedAddress]!!.lastReceived = date
+                        // 🔹 Extract core sender id (e.g. HDFCBK from VM-HDFCBK)
+                        val bankKey = extractBankSender(normalizedAddress)
+
+                        if (detectedSenders.containsKey(bankKey)) {
+                            val data = detectedSenders[bankKey]!!
+                            data.count++
+                            if (date > data.lastReceived) {
+                                data.sampleMessage = body
+                                data.lastReceived = date
                             }
                         } else {
-                            detectedSenders[normalizedAddress] = DetectedSenderData(
+                            detectedSenders[bankKey] = DetectedSenderData(
                                 sampleMessage = body,
                                 count = 1,
                                 lastReceived = date
@@ -96,56 +98,59 @@ object SmsScanner {
             Log.e("SmsScanner", "Error scanning SMS", e)
         }
 
-        // Convert to list and identify bank names
         return detectedSenders.map { (senderId, data) ->
             DetectedSender(
                 senderId = senderId,
-                sampleMessage = data.sampleMessage.take(150), // Truncate for display
+                sampleMessage = data.sampleMessage.take(150),
                 count = data.count,
                 lastReceived = data.lastReceived,
                 bankName = identifyBank(senderId)
             )
-        }.sortedByDescending { it.count } // Sort by frequency
+        }.sortedByDescending { it.count }
     }
 
-    /**
-     * Checks if a message looks like a banking/financial SMS
-     */
     private fun isBankingMessage(message: String): Boolean {
         val lowerMessage = message.lowercase()
         return BANK_KEYWORDS.any { lowerMessage.contains(it) }
     }
 
-    /**
-     * Normalizes SMS address (remove country codes, spaces, etc.)
-     */
-    private fun normalizeAddress(address: String): String {
-        // Remove +91, spaces, hyphens
+    fun normalizeAddress(address: String): String {
         return address.replace("+91", "")
             .replace(" ", "")
             .replace("-", "")
             .trim()
     }
 
-    /**
-     * Identifies the bank name from sender ID
-     */
+    // 🔹 NEW: Extract main bank-related part from sender ID
+    fun extractBankSender(address: String): String {
+        val upper = address.uppercase()
+        // Try to match known patterns from BANK_NAMES
+        for ((_, identifiers) in BANK_NAMES) {
+            for (id in identifiers) {
+                if (upper.contains(id)) {
+                    return id // return the core part like "HDFCBK"
+                }
+            }
+        }
+        // fallback if no match
+        return upper.takeLast(6) // take last 6 chars, often unique for banks
+    }
+
     private fun identifyBank(senderId: String): String {
         val upperSenderId = senderId.uppercase()
-
         for ((bankName, identifiers) in BANK_NAMES) {
             if (identifiers.any { upperSenderId.contains(it) }) {
                 return bankName
             }
         }
-
         return "Other"
     }
 
-    // Helper data class for building the map
     private data class DetectedSenderData(
         var sampleMessage: String,
         var count: Int,
         var lastReceived: Long
     )
+
+
 }
