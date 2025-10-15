@@ -23,10 +23,26 @@ fun TransactionsScreen(
     transactions: List<Transaction>,
     onBackClick: () -> Unit
 ) {
+    // Filter transactions for current month only
+    val currentMonthTransactions = remember(transactions) {
+        DateFilterHelper.filterCurrentMonthTransactions(transactions)
+    }
+
+    val currentMonthName = remember { DateFilterHelper.getCurrentMonthName() }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("All Transactions") },
+                title = {
+                    Column {
+                        Text("Transactions")
+                        Text(
+                            currentMonthName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -41,8 +57,8 @@ fun TransactionsScreen(
                 .padding(16.dp)
                 .fillMaxSize()
         ) {
-            // Summary Cards with Net Total
-            val netTotal = transactions.sumOf { transaction ->
+            // Summary Cards with Net Total for current month
+            val netTotal = currentMonthTransactions.sumOf { transaction ->
                 if (transaction.isCredit()) {
                     transaction.amount  // Add credits
                 } else {
@@ -58,8 +74,8 @@ fun TransactionsScreen(
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
                 TransactionSummaryCard(
-                    title = "Total",
-                    value = transactions.size.toString(),
+                    title = "This Month",
+                    value = currentMonthTransactions.size.toString(),
                     useColoredBackground = true
                 )
                 TransactionSummaryCard(
@@ -73,30 +89,38 @@ fun TransactionsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                "Transaction History",
+                "Transaction History - $currentMonthName",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (transactions.isEmpty()) {
+            if (currentMonthTransactions.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        "No transactions yet",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "No transactions this month",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Transactions will appear here once detected",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(
-                        transactions.sortedByDescending { it.transactionId },
+                        currentMonthTransactions.sortedByDescending { it.transactionId },
                         key = { it.transactionId }
                     ) { transaction ->
                         DetailedTransactionItem(transaction)
@@ -184,7 +208,7 @@ fun DetailedTransactionItem(transaction: Transaction) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Transaction type icon - Down arrow for credit, Up arrow for debit
+                    // Transaction type icon
                     Surface(
                         shape = MaterialTheme.shapes.small,
                         color = amountColor.copy(alpha = 0.2f),

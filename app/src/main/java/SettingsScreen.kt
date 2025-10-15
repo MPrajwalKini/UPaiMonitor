@@ -71,10 +71,8 @@ fun SettingsScreen(
                             monitoringActive = isChecked
                             prefs.edit().putBoolean("monitoring_active", isChecked).apply()
                             if (isChecked) {
-                                SmsReceiver.register(context)
                                 Toast.makeText(context, "Monitoring Enabled", Toast.LENGTH_SHORT).show()
                             } else {
-                                SmsReceiver.unregister(context)
                                 Toast.makeText(context, "Monitoring Disabled", Toast.LENGTH_SHORT).show()
                             }
                         }
