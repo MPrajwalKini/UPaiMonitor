@@ -5,10 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.automirrored.filled.ArrowBack  // Updated
-import androidx.compose.material.icons.filled.Delete
+
 object SmsMonitorManager {
 
     private const val PREFS_NAME = "SmsMonitorPrefs"

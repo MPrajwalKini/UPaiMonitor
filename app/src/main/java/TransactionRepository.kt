@@ -1,122 +1,32 @@
 package com.example.upaimonitor
 
 import android.content.Context
-import android.util.Log
 import androidx.lifecycle.MutableLiveData
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 class TransactionRepository(context: Context) {
 
     private val dao = AppDatabase.getInstance(context).transactionDao()
 
-    // LiveData bridge between background receiver and UI ViewModel
+    // LiveData bridge for SMSReceiver -> ViewModel updates
     val newTransactionLiveData = MutableLiveData<Transaction?>()
 
-    /**
-     * Inserts a transaction into Room DB.
-     * Replaces existing transaction if IDs match (safe write).
-     */
+    /** Save a transaction in Room DB */
     suspend fun insert(transaction: Transaction) {
         dao.insert(transaction)
     }
 
-    /**
-     * Safely insert a transaction only if it doesn't already exist.
-     * Prevents duplicate SMS transactions.
-     */
-    suspend fun insertIfNotExists(transaction: Transaction) {
-        val exists = dao.exists(transaction.transactionId)
-        if (exists == 0) {
-            dao.insert(transaction)
-            Log.d("TransactionRepository", "Inserted new transaction: ${transaction.transactionId}")
-        } else {
-            Log.d("TransactionRepository", "Skipped duplicate transaction: ${transaction.transactionId}")
-        }
-    }
-
-    /**
-     * Check if a transaction is a duplicate based on amount, type, and timestamp proximity.
-     * Returns true if a similar transaction exists within 60 seconds.
-     */
-    suspend fun isDuplicateTransaction(transaction: Transaction): Boolean {
-        val allTransactions = dao.getAll()
-        return allTransactions.any { existing ->
-            // Consider it duplicate if amount, type match and timestamps are within 60 seconds
-            existing.amount == transaction.amount &&
-                    existing.transactionType == transaction.transactionType &&
-                    areTimestampsClose(existing.timestamp, transaction.timestamp, 60000)
-        }
-    }
-
-    /**
-     * Helper function to check if two timestamps are close (within threshold)
-     */
-    private fun areTimestampsClose(timestamp1: String, timestamp2: String, thresholdMillis: Long): Boolean {
-        return try {
-            val format = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-            val date1 = format.parse(timestamp1)
-            val date2 = format.parse(timestamp2)
-            if (date1 != null && date2 != null) {
-                Math.abs(date1.time - date2.time) <= thresholdMillis
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            Log.e("TransactionRepository", "Error parsing timestamps", e)
-            false
-        }
-    }
-
-    /**
-     * Loads all stored transactions from the database.
-     */
+    /** Load all saved transactions from DB */
     suspend fun getAll(): List<Transaction> {
         return dao.getAll()
     }
 
-    /**
-     * Called from SmsReceiver or DebugHelper to notify the UI.
-     */
+    /** Called from SMSReceiver or DebugHelper */
     fun postNewTransaction(transaction: Transaction) {
         newTransactionLiveData.postValue(transaction)
-        Log.d("TransactionRepository", "New transaction posted to LiveData: ${transaction.transactionId}")
     }
 
-    /**
-     * Clears the LiveData after the MainActivity has consumed it.
-     */
+    /** Clears the LiveData after MainActivity processes it */
     fun clearNewTransaction() {
         newTransactionLiveData.postValue(null)
-    }
-
-    /**
-     * Removes duplicate transactions from the database.
-     * Keeps the first occurrence and deletes subsequent duplicates.
-     */
-    suspend fun removeDuplicates(): Int {
-        val allTransactions = dao.getAll()
-        val toDelete = mutableListOf<Transaction>()
-        val seen = mutableListOf<Transaction>()
-
-        for (transaction in allTransactions) {
-            val isDuplicate = seen.any { existing ->
-                existing.amount == transaction.amount &&
-                        existing.transactionType == transaction.transactionType &&
-                        areTimestampsClose(existing.timestamp, transaction.timestamp, 60000)
-            }
-
-            if (isDuplicate) {
-                toDelete.add(transaction)
-            } else {
-                seen.add(transaction)
-            }
-        }
-
-        // Delete duplicates
-        toDelete.forEach { dao.delete(it) }
-
-        Log.d("TransactionRepository", "Removed ${toDelete.size} duplicate transactions")
-        return toDelete.size
     }
 }

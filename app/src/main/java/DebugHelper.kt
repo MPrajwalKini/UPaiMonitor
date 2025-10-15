@@ -7,12 +7,14 @@ object DebugHelper {
         val regex = Regex("""(?i)(?:Rs\.?|INR)\s*([0-9,.]+)""")
         val match = regex.find(body)
         val amount = match?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull() ?: 0.0
-
+        val timestamp = System.currentTimeMillis()  // 1731478923000
+        val formatted = formatTimestamp(timestamp)
+        // "Nov 13, 02:35 PM"
         if (amount > 0) {
             val transaction = Transaction(
                 amount = amount,
                 sender = sender,
-                timestamp = System.currentTimeMillis().toString(),
+                timestamp = formatted,
                 message = body
             )
             MyApp.repository.postNewTransaction(transaction)
