@@ -1,18 +1,17 @@
 package com.example.upaimonitor
 
 import android.Manifest
-import android.content.Context
 import android.os.Bundle
-import android.widget.Toast
+import android.util.Log
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,7 +19,6 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -31,43 +29,82 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.filled.CheckCircle
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+//import java.text.SimpleDateFormat
+//import java.util.*
+
+// Helper: checks if a transaction timestamp is from today
+//fun isToday(timestamp: String): Boolean {
+//    return try {
+//        val formats = listOf(
+//            SimpleDateFormat("MMM dd yyyy, hh:mm a", Locale.getDefault()),
+//            SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault()),
+//            SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault())
+//        )
+//
+//        val transactionDate = formats.firstNotNullOfOrNull { fmt ->
+//            runCatching { fmt.parse(timestamp) }.getOrNull()
+//        } ?: return false
+//
+//        val today = Calendar.getInstance()
+//        val txnCalendar = Calendar.getInstance().apply { time = transactionDate }
+//
+//        today.get(Calendar.YEAR) == txnCalendar.get(Calendar.YEAR) &&
+//                today.get(Calendar.DAY_OF_YEAR) == txnCalendar.get(Calendar.DAY_OF_YEAR)
+//    } catch (e: Exception) {
+//        false
+//    }
+//}
+
+
 
 // Navigation sealed class
 sealed class Screen {
     object Dashboard : Screen()
     object Transactions : Screen()
     object SmsMonitors : Screen()
-    object Settings : Screen()
 }
 
 class MainActivity : ComponentActivity() {
-
     private val viewModel: TransactionViewModel by viewModels()
-    private val repository = MyApp.repository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Remove duplicates on app start
+        // Clean up existing duplicates on app start
         lifecycleScope.launch {
-            repository.removeDuplicates()
-            viewModel.loadTransactions()
+            val removedCount = MyApp.repository.removeDuplicates()
+            if (removedCount > 0) {
+                Log.d("MainActivity", "Cleaned up $removedCount duplicate transactions")
+                viewModel.loadTransactions()
+            }
         }
 
         setContent {
             UPaiMonitorTheme {
                 val scope = rememberCoroutineScope()
 
-                // Observe new transactions from repository
-                val newTransaction by repository.newTransactionLiveData.observeAsState()
+                // Observe LiveData emitted when new SMS transactions are detected
+                val newTransaction by MyApp.repository.newTransactionLiveData.observeAsState()
 
+                // When a new SMS is detected, check for duplicates before storing
                 LaunchedEffect(newTransaction) {
                     newTransaction?.let { txn ->
-                        val isDuplicate = repository.isDuplicateTransaction(txn)
+                        // Check for duplicates before inserting
+                        val isDuplicate = MyApp.repository.isDuplicateTransaction(txn)
+
                         if (!isDuplicate) {
                             viewModel.addNewTransaction(txn)
+                            scope.launch {
+                                MyApp.repository.insert(txn)
+                            }
+                        } else {
+                            Log.d("MainActivity", "Duplicate transaction detected and skipped")
                         }
-                        repository.clearNewTransaction()
+                        MyApp.repository.clearNewTransaction()
                     }
                 }
 
@@ -80,13 +117,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    override fun onResume() {
-        super.onResume()
-        viewModel.loadTransactions()
-    }
 }
-
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -95,26 +126,22 @@ fun AppContent(viewModel: TransactionViewModel) {
     val transactions by viewModel.transactions.collectAsState()
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
 
-    BackHandler(enabled = currentScreen != Screen.Dashboard) {
+    androidx.activity.compose.BackHandler(enabled = currentScreen != Screen.Dashboard) {
         currentScreen = Screen.Dashboard
     }
 
     if (smsPermissionState.status.isGranted) {
         when (currentScreen) {
-            Screen.Dashboard -> HomeScreenWithTodayTransactions(
-                allTransactions = transactions,
-                onNavigateToTransactions = { currentScreen = Screen.Transactions },
-                onNavigateToMonitors = { currentScreen = Screen.SmsMonitors },
-                onNavigateToSettings = { currentScreen = Screen.Settings }
+            Screen.Dashboard -> UPaiDashboard(
+                transactions = transactions,
+                onTransactionsClick = { currentScreen = Screen.Transactions },
+                onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors }
             )
             Screen.Transactions -> TransactionsScreen(
                 transactions = transactions,
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
             Screen.SmsMonitors -> SmsMonitorScreen(
-                onBackClick = { currentScreen = Screen.Dashboard }
-            )
-            Screen.Settings -> SettingsScreen(
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
         }
@@ -126,7 +153,9 @@ fun AppContent(viewModel: TransactionViewModel) {
 @Composable
 fun PermissionScreen(onGrant: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -146,29 +175,34 @@ fun PermissionScreen(onGrant: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreenWithTodayTransactions(
-    allTransactions: List<Transaction>,
-    onNavigateToTransactions: () -> Unit,
-    onNavigateToMonitors: () -> Unit,
-    onNavigateToSettings: () -> Unit
+fun UPaiDashboard(
+    transactions: List<Transaction>,
+    onTransactionsClick: () -> Unit,
+    onSmsMonitorsClick: () -> Unit
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    // Persisted state
     var monitoringActive by remember {
         mutableStateOf(prefs.getBoolean("monitoring_active", false))
     }
 
-    val todayTransactions = remember(allTransactions) {
-        DateFilterHelper.filterTodayTransactions(allTransactions)
+    // Automatically register or unregister based on saved preference
+    LaunchedEffect(monitoringActive) {
+        if (monitoringActive) {
+            SmsReceiver.register(context)
+        } else {
+            SmsReceiver.unregister(context)
+        }
     }
-    val todayDate = remember { DateFilterHelper.getTodayFormatted() }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("UPai Monitor") },
+                title = { Text("UPai Dashboard") },
                 actions = {
-                    IconButton(onClick = onNavigateToSettings) {
+                    IconButton(onClick = { /* Settings action */ }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
@@ -177,189 +211,36 @@ fun HomeScreenWithTodayTransactions(
     ) { paddingValues ->
         Column(
             modifier = Modifier
-                .fillMaxSize()
                 .padding(paddingValues)
                 .padding(16.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             MonitoringCard(
                 monitoringActive = monitoringActive,
                 onCheckedChange = { isActive ->
                     monitoringActive = isActive
                     prefs.edit().putBoolean("monitoring_active", isActive).apply()
-                    Toast.makeText(
-                        context,
-                        if (isActive) "Monitoring enabled" else "Monitoring disabled",
-                        Toast.LENGTH_SHORT
-                    ).show()
+
+                    if (isActive) {
+                        SmsReceiver.register(context)
+                        Toast.makeText(context, "Monitoring enabled", Toast.LENGTH_SHORT).show()
+                    } else {
+                        SmsReceiver.unregister(context)
+                        Toast.makeText(context, "Monitoring disabled", Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Today's Activity",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.primary
-                        ) {
-                            Text(
-                                todayDate,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text(
-                                "Transactions",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Text(
-                                "${todayTransactions.size}",
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-
-                        val todayNet = todayTransactions.sumOf {
-                            if (it.isCredit()) it.amount else -it.amount
-                        }
-                        val netColor = if (todayNet >= 0) Color(0xFF4CAF50) else Color(0xFFE53935)
-                        val netPrefix = if (todayNet >= 0) "+" else ""
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                "Net Amount",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Text(
-                                "$netPrefix₹${"%.2f".format(todayNet)}",
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = netColor
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Today's Transactions",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = onNavigateToTransactions) {
-                    Text("View All")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (todayTransactions.isEmpty()) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                "No transactions today",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                "New transactions will appear here automatically",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    items(todayTransactions.take(10), key = { it.transactionId }) { transaction ->
-                        CompactTransactionCard(transaction)
-                    }
-                    if (todayTransactions.size > 10) {
-                        item {
-                            TextButton(
-                                onClick = onNavigateToTransactions,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("View ${todayTransactions.size - 10} more transactions")
-                            }
-                        }
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onNavigateToMonitors,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("SMS Monitors")
-                }
-                Button(
-                    onClick = onNavigateToTransactions,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("All Transactions")
-                }
-            }
+            DashboardSummary(transactions)
+            Spacer(modifier = Modifier.height(16.dp))
+            QuickActions(
+                onTransactionsClick = onTransactionsClick,
+                onSmsMonitorsClick = onSmsMonitorsClick
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            RecentTransactions(transactions)
         }
     }
 }
@@ -371,7 +252,7 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (monitoringActive) {
-                Color(0xFF4CAF50).copy(alpha = 0.1f)
+                Color(0xFF4CAF50).copy(alpha = 0.1f) // Light green when active
             } else {
                 MaterialTheme.colorScheme.surfaceVariant
             }
@@ -388,6 +269,7 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
+                // Status indicator icon
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = if (monitoringActive) Color(0xFF4CAF50) else Color.Gray,
@@ -432,61 +314,196 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
 }
 
 @Composable
-fun CompactTransactionCard(transaction: Transaction) {
-    val isCredit = transaction.isCredit()
-    val amountColor = if (isCredit) Color(0xFF4CAF50) else Color(0xFFE53935)
-    val amountPrefix = if (isCredit) "+" else "-"
-    val backgroundColor = if (isCredit) {
-        Color(0xFF4CAF50).copy(alpha = 0.08f)
-    } else {
-        Color(0xFFE53935).copy(alpha = 0.08f)
+fun DashboardSummary(transactions: List<Transaction>) {
+    // Calculate net total: credits (+) minus debits (-)
+    val totalAmount = transactions.sumOf { transaction ->
+        if (transaction.isCredit()) {
+            transaction.amount  // Add credits
+        } else {
+            -transaction.amount  // Subtract debits
+        }
     }
+
+    val totalColor = if (totalAmount >= 0) Color.Green else Color.Red
+    val totalPrefix = if (totalAmount >= 0) "+" else ""
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SummaryCard(
+            title = "Transactions",
+            value = transactions.size.toString(),
+            modifier = Modifier.weight(1f)
+        )
+        SummaryCard(
+            title = "Net Total",
+            value = "$totalPrefix₹${"%.2f".format(totalAmount)}",
+            valueColor = totalColor,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+fun SummaryCard(
+    title: String,
+    value: String,
+    valueColor: Color = Color.Unspecified,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.height(100.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = value,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (valueColor != Color.Unspecified) valueColor else MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Quick Actions", fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = onTransactionsClick,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Transactions")
+                }
+                Button(
+                    onClick = onSmsMonitorsClick,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("SMS Monitors")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RecentTransactions(transactions: List<Transaction>) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Recent Transactions",
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleLarge
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        if (transactions.isEmpty()) {
+            Text("No transactions found yet. Add SMS monitors to start tracking.")
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(transactions.sortedByDescending { it.transactionId }.take(5), key = { it.transactionId }) { transaction ->
+                TransactionItem(transaction)
+                }
+            }
+        }
+    }
+}
+
+//@Composable
+//fun RecentTransactions(transactions: List<Transaction>) {
+//    // Filter only today's transactions
+//    val todayTransactions = transactions.filter { transaction ->
+//        isToday(transaction.timestamp)
+//    }
+//
+//    Column(modifier = Modifier.fillMaxWidth()) {
+//        Text(
+//            "Today's Transactions",
+//            fontWeight = FontWeight.Bold,
+//            style = MaterialTheme.typography.titleLarge
+//        )
+//        Spacer(modifier = Modifier.height(8.dp))
+//
+//        if (todayTransactions.isEmpty()) {
+//            Text(
+//                "No transactions today.",
+//                color = Color.Gray,
+//                style = MaterialTheme.typography.bodyMedium
+//            )
+//        } else {
+//            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+//                items(todayTransactions.take(5), key = { it.transactionId }) { transaction ->
+//                    TransactionItem(transaction)
+//                }
+//            }
+//        }
+//    }
+//}
+
+
+@Composable
+fun TransactionItem(transaction: Transaction) {
+    val isCredit = transaction.isCredit()
+    val amountColor = if (isCredit) Color.Green else Color.Red
+    val amountPrefix = if (isCredit) "+" else "-"
+    val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
+    val arrowTint = if (isCredit) Color.Green else Color.Red
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = backgroundColor
-        )
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(16.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column {
                 Text(
-                    transaction.sender,
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "$amountPrefix₹${transaction.amount}",
+                    color = amountColor,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (isCredit) "Received" else "Sent",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = amountColor.copy(alpha = 0.8f)
-                    )
-                    Text(
-                        " • ",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                    Text(
-                        transaction.timestamp,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "From: ${transaction.sender}",
+                    fontSize = 14.sp,
+                    color = Color.Gray
+                )
+                Text(
+                    text = transaction.timestamp,
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
             }
-
-            Text(
-                "$amountPrefix₹${transaction.amount}",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = amountColor
+            Icon(
+                imageVector = arrowIcon,
+                contentDescription = if (isCredit) "Credit" else "Debit",
+                tint = arrowTint,
+                modifier = Modifier.size(32.dp)
             )
         }
     }
@@ -500,21 +517,20 @@ fun DefaultPreview() {
             Transaction(
                 transactionId = "1",
                 amount = 90.0,
-                sender = "AX-FEDBNK",
-                timestamp = "Oct 15, 07:42 PM"
+                sender = "AX-FEDBNK-S",
+                timestamp = "Oct 10, 07:42 PM"
             ),
             Transaction(
                 transactionId = "2",
                 amount = 55.0,
                 sender = "VM-HDFCBK",
-                timestamp = "Oct 15, 01:01 PM"
+                timestamp = "Oct 10, 01:01 PM"
             )
         )
-        HomeScreenWithTodayTransactions(
-            allTransactions = dummyTransactions,
-            onNavigateToTransactions = {},
-            onNavigateToMonitors = {},
-            onNavigateToSettings = {}
+        UPaiDashboard(
+            transactions = dummyTransactions,
+            onTransactionsClick = {},
+            onSmsMonitorsClick = {}
         )
     }
 }
