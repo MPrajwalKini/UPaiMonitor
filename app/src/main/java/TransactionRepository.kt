@@ -94,6 +94,11 @@ class TransactionRepository(context: Context) {
      * Removes duplicate transactions from the database.
      * Keeps the first occurrence and deletes subsequent duplicates.
      */
+
+    suspend fun clearAllTransactions() {
+        dao.clearAll()
+    }
+
     suspend fun removeDuplicates(): Int {
         val allTransactions = dao.getAll()
         val toDelete = mutableListOf<Transaction>()

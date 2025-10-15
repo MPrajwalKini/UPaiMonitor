@@ -36,6 +36,12 @@ interface TransactionDao {
     suspend fun exists(id: String): Int
 
     /**
+     * Clears all transactions from the database.
+     */
+    @Query("DELETE FROM transactions")
+    suspend fun clearAll()
+
+    /**
      * Deletes a transaction from the database.
      */
     @Delete

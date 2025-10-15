@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.CheckCircle
 import android.content.Context
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.ArrowBack
 import android.widget.Toast
 //import java.text.SimpleDateFormat
 //import java.util.*
@@ -66,6 +67,7 @@ sealed class Screen {
     object Dashboard : Screen()
     object Transactions : Screen()
     object SmsMonitors : Screen()
+    object Settings : Screen()
 }
 
 class MainActivity : ComponentActivity() {
@@ -135,13 +137,17 @@ fun AppContent(viewModel: TransactionViewModel) {
             Screen.Dashboard -> UPaiDashboard(
                 transactions = transactions,
                 onTransactionsClick = { currentScreen = Screen.Transactions },
-                onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors }
+                onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors },
+                onSettingsClick = { currentScreen = Screen.Settings }
             )
             Screen.Transactions -> TransactionsScreen(
                 transactions = transactions,
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
             Screen.SmsMonitors -> SmsMonitorScreen(
+                onBackClick = { currentScreen = Screen.Dashboard }
+            )
+            Screen.Settings -> SettingsScreen(
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
         }
@@ -178,7 +184,8 @@ fun PermissionScreen(onGrant: () -> Unit) {
 fun UPaiDashboard(
     transactions: List<Transaction>,
     onTransactionsClick: () -> Unit,
-    onSmsMonitorsClick: () -> Unit
+    onSmsMonitorsClick: () -> Unit,
+    onSettingsClick: () -> Unit // <- passed from AppContent to navigate
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -202,7 +209,8 @@ fun UPaiDashboard(
             TopAppBar(
                 title = { Text("UPai Dashboard") },
                 actions = {
-                    IconButton(onClick = { /* Settings action */ }) {
+                    // Settings button now calls the lambda to navigate
+                    IconButton(onClick = onSettingsClick) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
@@ -423,7 +431,7 @@ fun RecentTransactions(transactions: List<Transaction>) {
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(transactions.sortedByDescending { it.transactionId }.take(5), key = { it.transactionId }) { transaction ->
-                TransactionItem(transaction)
+                    TransactionItem(transaction)
                 }
             }
         }
@@ -530,7 +538,8 @@ fun DefaultPreview() {
         UPaiDashboard(
             transactions = dummyTransactions,
             onTransactionsClick = {},
-            onSmsMonitorsClick = {}
+            onSmsMonitorsClick = {},
+            onSettingsClick = {}
         )
     }
 }
