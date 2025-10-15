@@ -15,6 +15,8 @@ data class DetectedSender(
 
 object SmsScanner {
 
+    private const val TAG = "SmsScanner"
+
     private val BANK_KEYWORDS = listOf(
         "debited", "credited", "account", "balance", "upi", "transfer",
         "payment", "transaction", "bank", "a/c", "ac", "inr", "rs.",
@@ -23,7 +25,7 @@ object SmsScanner {
 
     private val BANK_NAMES = mapOf(
         "HDFC" to listOf("HDFCBK", "HDFC", "HDFCBANK"),
-        "SBI" to listOf("SBIINB", "SBICRD", "SBI", "STbank"),
+        "SBI" to listOf("SBIINB", "SBICRD", "SBI", "STBANK"),
         "ICICI" to listOf("ICICIB", "ICICI", "ICICIBK"),
         "AXIS" to listOf("AXISBK", "AXIS"),
         "Kotak" to listOf("KOTAKB", "KOTAK"),
@@ -46,10 +48,13 @@ object SmsScanner {
      * Scans SMS inbox and returns all detected banking SMS senders
      */
     fun scanBankingSenders(context: Context): List<DetectedSender> {
+        Log.d(TAG, "Starting SMS scan...")
         val detectedSenders = mutableMapOf<String, DetectedSenderData>()
 
         try {
             val uri = Uri.parse("content://sms/inbox")
+            Log.d(TAG, "Querying SMS inbox: $uri")
+
             val cursor: Cursor? = context.contentResolver.query(
                 uri,
                 arrayOf("address", "body", "date"),
@@ -58,18 +63,43 @@ object SmsScanner {
                 "date DESC LIMIT 1000" // Scan last 1000 messages
             )
 
-            cursor?.use {
+            if (cursor == null) {
+                Log.e(TAG, "Cursor is null - permission might not be granted or no SMS access")
+                return emptyList()
+            }
+
+            cursor.use {
                 val addressIndex = it.getColumnIndex("address")
                 val bodyIndex = it.getColumnIndex("body")
                 val dateIndex = it.getColumnIndex("date")
 
+                Log.d(TAG, "Column indices - address: $addressIndex, body: $bodyIndex, date: $dateIndex")
+
+                if (addressIndex == -1 || bodyIndex == -1 || dateIndex == -1) {
+                    Log.e(TAG, "Invalid column indices - SMS permission might not be properly granted")
+                    return emptyList()
+                }
+
+                val totalMessages = it.count
+                Log.d(TAG, "Total messages to scan: $totalMessages")
+
+                var scannedCount = 0
+                var bankingMessagesFound = 0
+
                 while (it.moveToNext()) {
-                    val address = it.getString(addressIndex) ?: continue
-                    val body = it.getString(bodyIndex) ?: continue
+                    scannedCount++
+
+                    val address = it.getString(addressIndex)
+                    val body = it.getString(bodyIndex)
                     val date = it.getLong(dateIndex)
+
+                    if (address == null || body == null) {
+                        continue
+                    }
 
                     // Check if this looks like a banking SMS
                     if (isBankingMessage(body)) {
+                        bankingMessagesFound++
                         val normalizedAddress = normalizeAddress(address)
 
                         if (detectedSenders.containsKey(normalizedAddress)) {
@@ -86,18 +116,28 @@ object SmsScanner {
                                 lastReceived = date
                             )
                         }
+
+                        // Log first few banking messages for debugging
+                        if (bankingMessagesFound <= 3) {
+                            Log.d(TAG, "Banking SMS found from $normalizedAddress: ${body.take(50)}...")
+                        }
                     }
                 }
+
+                Log.d(TAG, "Scanned $scannedCount messages, found $bankingMessagesFound banking messages")
+                Log.d(TAG, "Unique banking senders: ${detectedSenders.size}")
             }
 
-            Log.d("SmsScanner", "Found ${detectedSenders.size} banking SMS senders")
-
+        } catch (e: SecurityException) {
+            Log.e(TAG, "SecurityException - SMS permission not granted", e)
+            throw e
         } catch (e: Exception) {
-            Log.e("SmsScanner", "Error scanning SMS", e)
+            Log.e(TAG, "Error scanning SMS", e)
+            throw e
         }
 
         // Convert to list and identify bank names
-        return detectedSenders.map { (senderId, data) ->
+        val result = detectedSenders.map { (senderId, data) ->
             DetectedSender(
                 senderId = senderId,
                 sampleMessage = data.sampleMessage.take(150), // Truncate for display
@@ -106,6 +146,9 @@ object SmsScanner {
                 bankName = identifyBank(senderId)
             )
         }.sortedByDescending { it.count } // Sort by frequency
+
+        Log.d(TAG, "Returning ${result.size} detected senders")
+        return result
     }
 
     /**

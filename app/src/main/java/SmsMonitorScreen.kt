@@ -1,13 +1,13 @@
 package com.example.upaimonitor
 
 import android.Manifest
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,6 +25,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private const val TAG = "SmsMonitorScreen"
+
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SmsMonitorScreen(onBackClick: () -> Unit) {
@@ -37,18 +39,42 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
     var selectedSenders by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showManualInput by remember { mutableStateOf(false) }
     var manualInput by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // 👇 Observe the monitored senders stored in SharedPreferences
     val monitoredIds by SmsMonitorManager.monitoredIds.collectAsState()
 
-    // Function to scan SMS
+    // Function to scan SMS with error handling
     fun scanSms() {
+        Log.d(TAG, "Scan button clicked")
+
+        if (!smsPermissionState.status.isGranted) {
+            Log.e(TAG, "SMS permission not granted")
+            errorMessage = "SMS permission is required to scan messages"
+            return
+        }
+
         scope.launch {
-            isScanning = true
-            detectedSenders = withContext(Dispatchers.IO) {
-                SmsScanner.scanBankingSenders(context)
+            try {
+                isScanning = true
+                errorMessage = null
+                Log.d(TAG, "Starting SMS scan...")
+
+                val senders = withContext(Dispatchers.IO) {
+                    SmsScanner.scanBankingSenders(context)
+                }
+
+                Log.d(TAG, "Scan completed. Found ${senders.size} senders")
+                detectedSenders = senders
+
+                if (senders.isEmpty()) {
+                    errorMessage = "No banking SMS senders found in your messages"
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error scanning SMS", e)
+                errorMessage = "Error scanning SMS: ${e.message}"
+            } finally {
+                isScanning = false
             }
-            isScanning = false
         }
     }
 
@@ -98,7 +124,10 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
                         Spacer(modifier = Modifier.height(12.dp))
-                        Button(onClick = { smsPermissionState.launchPermissionRequest() }) {
+                        Button(onClick = {
+                            Log.d(TAG, "Requesting SMS permission")
+                            smsPermissionState.launchPermissionRequest()
+                        }) {
                             Text("Grant Permission")
                         }
                     }
@@ -117,6 +146,27 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Show error message if any
+            errorMessage?.let { error ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            error,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // Show monitored IDs first
             if (monitoredIds.isNotEmpty()) {
@@ -279,6 +329,7 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
         )
     }
 }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetectedSenderCard(
