@@ -30,8 +30,14 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import java.text.SimpleDateFormat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.ui.platform.LocalContext
 import java.util.*
+import android.widget.Toast
+import android.content.Context
 
 // Helper: checks if a transaction timestamp is from today
 //fun isToday(timestamp: String): Boolean {
@@ -63,6 +69,7 @@ sealed class Screen {
     object Dashboard : Screen()
     object Transactions : Screen()
     object SmsMonitors : Screen()
+    object ManageDuplicates : Screen()
 }
 
 class MainActivity : ComponentActivity() {
@@ -132,7 +139,8 @@ fun AppContent(viewModel: TransactionViewModel) {
             Screen.Dashboard -> UPaiDashboard(
                 transactions = transactions,
                 onTransactionsClick = { currentScreen = Screen.Transactions },
-                onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors }
+                onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors },
+                onManageDuplicatesClick = { currentScreen = Screen.ManageDuplicates }  // Add this
             )
             Screen.Transactions -> TransactionsScreen(
                 transactions = transactions,
@@ -141,11 +149,19 @@ fun AppContent(viewModel: TransactionViewModel) {
             Screen.SmsMonitors -> SmsMonitorScreen(
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
+            Screen.ManageDuplicates -> ManageDuplicatesScreen(  // Add this block
+                transactions = transactions,
+                onBackClick = { currentScreen = Screen.Dashboard },
+                onTransactionsDeleted = {
+                    viewModel.loadTransactions()
+                }
+            )
         }
     } else {
         PermissionScreen(onGrant = { smsPermissionState.launchPermissionRequest() })
     }
 }
+
 
 @Composable
 fun PermissionScreen(onGrant: () -> Unit) {
@@ -175,7 +191,8 @@ fun PermissionScreen(onGrant: () -> Unit) {
 fun UPaiDashboard(
     transactions: List<Transaction>,
     onTransactionsClick: () -> Unit,
-    onSmsMonitorsClick: () -> Unit
+    onSmsMonitorsClick: () -> Unit,
+    onManageDuplicatesClick: () -> Unit
 ) {
     var monitoringActive by remember { mutableStateOf(true) }
 
@@ -185,7 +202,10 @@ fun UPaiDashboard(
                 title = { Text("UPai Dashboard") },
                 actions = {
                     IconButton(onClick = { /* Settings action */ }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings"
+                        )
                     }
                 }
             )
@@ -202,18 +222,37 @@ fun UPaiDashboard(
                 monitoringActive = monitoringActive,
                 onCheckedChange = { monitoringActive = it }
             )
+
             Spacer(modifier = Modifier.height(16.dp))
+
             DashboardSummary(transactions)
+
             Spacer(modifier = Modifier.height(16.dp))
+
             QuickActions(
                 onTransactionsClick = onTransactionsClick,
                 onSmsMonitorsClick = onSmsMonitorsClick
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Manage Duplicates Button
+            OutlinedButton(
+                onClick = onManageDuplicatesClick,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Manage Duplicate Transactions")
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
             RecentTransactions(transactions)
         }
     }
+
 }
+
 
 @Composable
 fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit) {
@@ -500,7 +539,8 @@ fun DefaultPreview() {
         UPaiDashboard(
             transactions = dummyTransactions,
             onTransactionsClick = {},
-            onSmsMonitorsClick = {}
+            onSmsMonitorsClick = {},
+            onManageDuplicatesClick = {}  // Add this
         )
     }
 }

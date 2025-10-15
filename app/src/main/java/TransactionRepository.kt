@@ -8,7 +8,7 @@ import java.util.Locale
 
 class TransactionRepository(context: Context) {
 
-    private val dao = AppDatabase.getInstance(context).transactionDao()
+    val dao = AppDatabase.getInstance(context).transactionDao()
 
     // LiveData bridge between background receiver and UI ViewModel
     val newTransactionLiveData = MutableLiveData<Transaction?>()
@@ -94,29 +94,59 @@ class TransactionRepository(context: Context) {
      * Removes duplicate transactions from the database.
      * Keeps the first occurrence and deletes subsequent duplicates.
      */
+    /**
+     * Removes near-duplicate transactions.
+     * Two transactions are considered duplicates if:
+     * - They have the same normalized sender
+     * - They have the same amount
+     * - Their timestamps are within 60 seconds
+     */
     suspend fun removeDuplicates(): Int {
-        val allTransactions = dao.getAll()
+        val allTransactions = dao.getAll().sortedBy { parseTimestamp(it.timestamp) }
         val toDelete = mutableListOf<Transaction>()
         val seen = mutableListOf<Transaction>()
 
-        for (transaction in allTransactions) {
+        for (tx in allTransactions) {
             val isDuplicate = seen.any { existing ->
-                existing.amount == transaction.amount &&
-                        existing.transactionType == transaction.transactionType &&
-                        areTimestampsClose(existing.timestamp, transaction.timestamp, 60000)
+                normalizeSender(existing.sender) == normalizeSender(tx.sender) &&
+                        existing.amount == tx.amount &&
+                        areTimestampsClose(existing.timestamp, tx.timestamp, 60000)
             }
 
             if (isDuplicate) {
-                toDelete.add(transaction)
+                toDelete.add(tx)
             } else {
-                seen.add(transaction)
+                seen.add(tx)
             }
         }
 
         // Delete duplicates
         toDelete.forEach { dao.delete(it) }
-
         Log.d("TransactionRepository", "Removed ${toDelete.size} duplicate transactions")
         return toDelete.size
     }
+
+
+    /**
+     * Converts timestamp string to milliseconds.
+     */
+    fun parseTimestamp(timestamp: String): Long {
+        return try {
+            val format = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
+            format.parse(timestamp)?.time ?: 0L
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error parsing timestamp: $timestamp", e)
+            0L
+        }
+    }
+
+    /**
+     * Normalizes sender (e.g., "AX-CANBNK-S" → "CANBNK").
+     */
+    fun normalizeSender(sender: String): String {
+        val upper = sender.uppercase(Locale.getDefault())
+        val match = Regex("([A-Z]{3,8})").findAll(upper).map { it.value }.toList()
+        return if (match.isNotEmpty()) match[match.size / 2] else upper.take(8)
+    }
+
 }
