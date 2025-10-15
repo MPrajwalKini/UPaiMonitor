@@ -23,26 +23,10 @@ fun TransactionsScreen(
     transactions: List<Transaction>,
     onBackClick: () -> Unit
 ) {
-    // Filter transactions for current month only
-    val currentMonthTransactions = remember(transactions) {
-        DateFilterHelper.filterCurrentMonthTransactions(transactions)
-    }
-
-    val currentMonthName = remember { DateFilterHelper.getCurrentMonthName() }
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text("Transactions")
-                        Text(
-                            currentMonthName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
+                title = { Text("All Transactions") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -57,8 +41,8 @@ fun TransactionsScreen(
                 .padding(16.dp)
                 .fillMaxSize()
         ) {
-            // Summary Cards with Net Total for current month
-            val netTotal = currentMonthTransactions.sumOf { transaction ->
+            // Summary Cards with Net Total
+            val netTotal = transactions.sumOf { transaction ->
                 if (transaction.isCredit()) {
                     transaction.amount  // Add credits
                 } else {
@@ -74,8 +58,8 @@ fun TransactionsScreen(
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
                 TransactionSummaryCard(
-                    title = "This Month",
-                    value = currentMonthTransactions.size.toString(),
+                    title = "Total",
+                    value = transactions.size.toString(),
                     useColoredBackground = true
                 )
                 TransactionSummaryCard(
@@ -89,40 +73,29 @@ fun TransactionsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                "Transaction History - $currentMonthName",
+                "Transaction History",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (currentMonthTransactions.isEmpty()) {
+            if (transactions.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "No transactions this month",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "Transactions will appear here once detected",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        "No transactions yet",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(
-                        currentMonthTransactions.sortedByDescending { it.transactionId },
-                        key = { it.transactionId }
-                    ) { transaction ->
+                    items(transactions, key = { it.transactionId }) { transaction ->
                         DetailedTransactionItem(transaction)
                     }
                 }
@@ -187,7 +160,7 @@ fun DetailedTransactionItem(transaction: Transaction) {
     val amountColor = if (isCredit) Color(0xFF4CAF50) else Color(0xFFE53935)
     val amountPrefix = if (isCredit) "+" else "-"
     val backgroundColor = if (isCredit) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color(0xFFE53935).copy(alpha = 0.1f)
-    val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp
+    val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -208,7 +181,7 @@ fun DetailedTransactionItem(transaction: Transaction) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Transaction type icon
+                    // Transaction type icon - Down arrow for credit, Up arrow for debit
                     Surface(
                         shape = MaterialTheme.shapes.small,
                         color = amountColor.copy(alpha = 0.2f),
