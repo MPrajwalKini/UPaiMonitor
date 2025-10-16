@@ -20,7 +20,7 @@ object SmsScanner {
     private val BANK_KEYWORDS = listOf(
         "debited", "credited", "account", "balance", "upi", "transfer",
         "payment", "transaction", "bank", "a/c", "ac", "inr", "rs.",
-        "withdrawn", "deposited", "paytm", "phonepe", "gpay", "amazon pay"
+        "withdrawn", "deposited", "paytm", "phonepe", "gpay", "amazon pay", "paid"
     )
 
     private val BANK_NAMES = mapOf(
