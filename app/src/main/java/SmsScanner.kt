@@ -161,13 +161,22 @@ object SmsScanner {
 
     /**
      * Normalizes SMS address (remove country codes, spaces, etc.)
+     * Made public for use in SmsReceiver
      */
-    private fun normalizeAddress(address: String): String {
+    fun normalizeAddress(address: String): String {
         // Remove +91, spaces, hyphens
         return address.replace("+91", "")
             .replace(" ", "")
             .replace("-", "")
             .trim()
+    }
+
+    /**
+     * Extracts the bank name from sender ID
+     * Used by SmsReceiver to get clean bank identifier
+     */
+    fun extractBankSender(senderId: String): String {
+        return identifyBank(senderId)
     }
 
     /**
