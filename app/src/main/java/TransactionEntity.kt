@@ -2,6 +2,7 @@ package com.example.upaimonitor
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.example.upaimonitor.com.example.upaimonitor.Transaction
 
 @Entity(tableName = "transactions")
 data class TransactionEntity(

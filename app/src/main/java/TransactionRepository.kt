@@ -2,33 +2,55 @@ package com.example.upaimonitor
 
 import android.content.Context
 import android.util.Log
+import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import com.example.upaimonitor.Transaction
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.math.abs
 
 class TransactionRepository(context: Context) {
 
+    // Keep dao accessible as in Code 2
     val dao = AppDatabase.getInstance(context).transactionDao()
 
-    // LiveData bridge between background receiver and UI ViewModel
+    // LiveData for UI observation (from Code 1)
+    private val _allTransactionsLiveData = MutableLiveData<List<Transaction>>(emptyList())
+    val allTransactionsLiveData: LiveData<List<Transaction>> get() = _allTransactionsLiveData
+
+    // LiveData bridge for new incoming transaction (Code 2 style)
     val newTransactionLiveData = MutableLiveData<Transaction?>()
 
     /**
-     * Inserts a transaction into Room DB.
-     * Replaces existing transaction if IDs match (safe write).
+     * Loads all transactions from DB into LiveData.
+
      */
-    suspend fun insert(transaction: Transaction) {
-        dao.insert(transaction)
+    suspend fun loadAllTransactions() = withContext(Dispatchers.IO) {
+        val all = dao.getAll()
+        _allTransactionsLiveData.postValue(all)
     }
 
     /**
-     * Safely insert a transaction only if it doesn't already exist.
-     * Prevents duplicate SMS transactions.
+     * Force insert (no duplicate check) — kept from Code 2 but wrapped in IO context.
      */
-    suspend fun insertIfNotExists(transaction: Transaction) {
+    suspend fun insert(transaction: Transaction) = withContext(Dispatchers.IO) {
+        dao.insert(transaction)
+        Log.d("TransactionRepository", "Inserted transaction (force): ${transaction.transactionId}")
+        updateAllTransactions()
+    }
+
+    /**
+     * Insert only if transactionId not present (safe insert).
+     * Uses DAO.exists like both files.
+     */
+    suspend fun insertIfNotExists(transaction: Transaction) = withContext(Dispatchers.IO) {
         val exists = dao.exists(transaction.transactionId)
         if (exists == 0) {
             dao.insert(transaction)
+            newTransactionLiveData.postValue(transaction)
+            updateAllTransactions()
             Log.d("TransactionRepository", "Inserted new transaction: ${transaction.transactionId}")
         } else {
             Log.d("TransactionRepository", "Skipped duplicate transaction: ${transaction.transactionId}")
@@ -36,13 +58,13 @@ class TransactionRepository(context: Context) {
     }
 
     /**
-     * Check if a transaction is a duplicate based on amount, type, and timestamp proximity.
-     * Returns true if a similar transaction exists within 60 seconds.
+     * Checks if a similar transaction already exists (amount + type + close timestamp).
+     * Uses Code 2 logic but keeps coroutine context safety.
      */
-    suspend fun isDuplicateTransaction(transaction: Transaction): Boolean {
+    suspend fun isDuplicateTransaction(transaction: Transaction): Boolean = withContext(Dispatchers.IO) {
         val allTransactions = dao.getAll()
-        return allTransactions.any { existing ->
-            // Consider it duplicate if amount, type match and timestamps are within 60 seconds
+        allTransactions.any { existing ->
+
             existing.amount == transaction.amount &&
                     existing.transactionType == transaction.transactionType &&
                     areTimestampsClose(existing.timestamp, transaction.timestamp, 60000)
@@ -50,58 +72,15 @@ class TransactionRepository(context: Context) {
     }
 
     /**
-     * Helper function to check if two timestamps are close (within threshold)
-     */
-    private fun areTimestampsClose(timestamp1: String, timestamp2: String, thresholdMillis: Long): Boolean {
-        return try {
-            val format = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-            val date1 = format.parse(timestamp1)
-            val date2 = format.parse(timestamp2)
-            if (date1 != null && date2 != null) {
-                Math.abs(date1.time - date2.time) <= thresholdMillis
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            Log.e("TransactionRepository", "Error parsing timestamps", e)
-            false
-        }
-    }
-
-    /**
-     * Loads all stored transactions from the database.
-     */
-    suspend fun getAll(): List<Transaction> {
-        return dao.getAll()
-    }
-
-    /**
-     * Called from SmsReceiver or DebugHelper to notify the UI.
-     */
-    fun postNewTransaction(transaction: Transaction) {
-        newTransactionLiveData.postValue(transaction)
-        Log.d("TransactionRepository", "New transaction posted to LiveData: ${transaction.transactionId}")
-    }
-
-    /**
-     * Clears the LiveData after the MainActivity has consumed it.
-     */
-    fun clearNewTransaction() {
-        newTransactionLiveData.postValue(null)
-    }
-
-    /**
-     * Removes duplicate transactions from the database.
+     * Removes near-duplicate transactions.
+     * Duplicate criteria (from Code 2):
+     * - same normalized sender
+     * - same amount
+     * - timestamps within threshold (60s)
+     *
      * Keeps the first occurrence and deletes subsequent duplicates.
      */
-    /**
-     * Removes near-duplicate transactions.
-     * Two transactions are considered duplicates if:
-     * - They have the same normalized sender
-     * - They have the same amount
-     * - Their timestamps are within 60 seconds
-     */
-    suspend fun removeDuplicates(): Int {
+    suspend fun removeDuplicates(): Int = withContext(Dispatchers.IO) {
         val allTransactions = dao.getAll().sortedBy { parseTimestamp(it.timestamp) }
         val toDelete = mutableListOf<Transaction>()
         val seen = mutableListOf<Transaction>()
@@ -118,17 +97,88 @@ class TransactionRepository(context: Context) {
             } else {
                 seen.add(tx)
             }
+
+
+
         }
 
-        // Delete duplicates
+        // Delete duplicates and refresh LiveData
         toDelete.forEach { dao.delete(it) }
+        updateAllTransactions()
         Log.d("TransactionRepository", "Removed ${toDelete.size} duplicate transactions")
-        return toDelete.size
+        toDelete.size
+    }
+
+    /**
+     * Delete everything (keeps Code 1 behavior of refreshing LiveData).
+     */
+    suspend fun clearAllTransactions() = withContext(Dispatchers.IO) {
+        dao.clearAll()
+        updateAllTransactions()
+        Log.d("TransactionRepository", "Cleared all transactions")
+    }
+
+    /**
+     * Get all (background-friendly).
+     */
+    suspend fun getAll(): List<Transaction> = withContext(Dispatchers.IO) { dao.getAll() }
+
+    /**
+     * Posts a new transaction to LiveData (for UI update by receiver/debug helper).
+     * Uses postValue so it can be called from background threads (Code 2 style).
+     */
+    fun postNewTransaction(transaction: Transaction) {
+        newTransactionLiveData.postValue(transaction)
+        Log.d("TransactionRepository", "New transaction posted to LiveData: ${transaction.transactionId}")
+    }
+
+    /**
+     * Clears the new transaction LiveData after being consumed by UI.
+     */
+    fun clearNewTransaction() {
+        newTransactionLiveData.postValue(null)
+    }
+
+    // ---- Helpers ----
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    private suspend fun updateAllTransactions() {
+        val all = dao.getAll()
+        _allTransactionsLiveData.postValue(all)
+
     }
 
 
     /**
-     * Converts timestamp string to milliseconds.
+     * Parses timestamp string (Code 2 implementation).
+     * Returns epoch millis or 0L on error.
      */
     fun parseTimestamp(timestamp: String): Long {
         return try {
@@ -141,7 +191,24 @@ class TransactionRepository(context: Context) {
     }
 
     /**
-     * Normalizes sender (e.g., "AX-CANBNK-S" → "CANBNK").
+     * Checks whether two timestamp strings are within threshold milliseconds.
+     * Uses the same format as parseTimestamp.
+     */
+    private fun areTimestampsClose(ts1: String, ts2: String, thresholdMillis: Long): Boolean {
+        return try {
+            val format = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
+            val d1 = format.parse(ts1)
+            val d2 = format.parse(ts2)
+            if (d1 != null && d2 != null) abs(d1.time - d2.time) <= thresholdMillis else false
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error comparing timestamps", e)
+            false
+        }
+    }
+
+    /**
+     * Normalizes sender string to a compact identifier (Code 2 logic).
+     * Example: "AX-CANBNK-S" -> "CANBNK"
      */
     fun normalizeSender(sender: String): String {
         val upper = sender.uppercase(Locale.getDefault())

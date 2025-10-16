@@ -2,7 +2,6 @@ package com.example.upaimonitor
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -19,7 +18,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.room.Dao
+import com.example.upaimonitor.Transaction
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManageDuplicatesScreen(
