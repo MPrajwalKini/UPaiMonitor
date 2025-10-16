@@ -396,6 +396,7 @@ fun QuickActions(
     }
 }
 
+// Option 1: If your Transaction class has timestampMillis field
 @Composable
 fun RecentTransactions(transactions: List<Transaction>) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -408,8 +409,24 @@ fun RecentTransactions(transactions: List<Transaction>) {
         if (transactions.isEmpty()) {
             Text("No transactions found yet. Add SMS monitors to start tracking.")
         } else {
+            // Sort by transactionId which contains timestamp (T{timestamp})
+            // Extract the numeric part after 'T' or 'UPI'
+            val sortedTransactions = transactions.sortedByDescending { transaction ->
+                try {
+                    // Extract timestamp from ID like "T1697123456789" or "UPI123456789"
+                    val idNumber = transaction.transactionId
+                        .removePrefix("T")
+                        .removePrefix("UPI")
+                        .filter { it.isDigit() }
+                        .toLongOrNull() ?: 0L
+                    idNumber
+                } catch (e: Exception) {
+                    0L
+                }
+            }.take(5)
+
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(transactions.sortedByDescending { it.transactionId }.take(5), key = { it.transactionId }) { transaction ->
+                items(sortedTransactions, key = { it.transactionId }) { transaction ->
                     TransactionItem(transaction)
                 }
             }
