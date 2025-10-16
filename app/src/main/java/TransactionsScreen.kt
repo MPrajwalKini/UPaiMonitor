@@ -1,10 +1,8 @@
 package com.example.upaimonitor
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -18,8 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.upaimonitor.Transaction
-import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -27,34 +23,10 @@ fun TransactionsScreen(
     transactions: List<Transaction>,
     onBackClick: () -> Unit
 ) {
-    // --- Month Selector Logic ---
-    val months = listOf("All") + DateFilterHelper.getAllMonthNames()
-    var selectedMonth by remember { mutableStateOf(DateFilterHelper.getCurrentMonthName()) }
-
-    val filteredTransactions = remember(transactions, selectedMonth) {
-        when (selectedMonth) {
-            "All" -> transactions
-            else -> DateFilterHelper.filterTransactionsByMonth(transactions, selectedMonth)
-        }
-    }
-
-    val netTotal = filteredTransactions.sumOf { if (it.isCredit()) it.amount else -it.amount }
-    val totalColor = if (netTotal >= 0) Color(0xFF4CAF50) else Color(0xFFE53935)
-    val totalPrefix = if (netTotal >= 0) "+" else ""
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text("Transactions")
-                        Text(
-                            selectedMonth,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
+                title = { Text("All Transactions") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -69,37 +41,25 @@ fun TransactionsScreen(
                 .padding(16.dp)
                 .fillMaxSize()
         ) {
-            // --- Month Selector ---
-            Row(
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                months.forEach { month ->
-                    val isSelected = month == selectedMonth
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { selectedMonth = month },
-                        label = { Text(month) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    )
+            // Summary Cards with Net Total
+            val netTotal = transactions.sumOf { transaction ->
+                if (transaction.isCredit()) {
+                    transaction.amount  // Add credits
+                } else {
+                    -transaction.amount  // Subtract debits
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            val totalColor = if (netTotal >= 0) Color(0xFF4CAF50) else Color(0xFFE53935)
+            val totalPrefix = if (netTotal >= 0) "+" else ""
 
-            // --- Summary Cards ---
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
                 TransactionSummaryCard(
-                    title = if (selectedMonth == "All") "Total" else "This Month",
-                    value = filteredTransactions.size.toString(),
+                    title = "Total",
+                    value = transactions.size.toString(),
                     useColoredBackground = true
                 )
                 TransactionSummaryCard(
@@ -113,40 +73,29 @@ fun TransactionsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                if (selectedMonth == "All") "Transaction History" else "Transaction History - $selectedMonth",
+                "Transaction History",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (filteredTransactions.isEmpty()) {
+            if (transactions.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "No transactions found",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "Transactions will appear here once detected",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        "No transactions yet",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(
-                        filteredTransactions.sortedByDescending { it.timestamp },
-                        key = { it.transactionId }
-                    ) { transaction ->
+                    items(transactions, key = { it.transactionId }) { transaction ->
                         DetailedTransactionItem(transaction)
                     }
                 }
@@ -166,10 +115,11 @@ fun TransactionSummaryCard(
         modifier = Modifier.size(width = 160.dp, height = 90.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (useColoredBackground)
+            containerColor = if (useColoredBackground) {
                 MaterialTheme.colorScheme.primaryContainer
-            else
+            } else {
                 MaterialTheme.colorScheme.surfaceContainerLow
+            }
         )
     ) {
         Column(
@@ -184,19 +134,21 @@ fun TransactionSummaryCard(
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (valueColor != Color.Unspecified) valueColor else {
-                    if (useColoredBackground)
+                    if (useColoredBackground) {
                         MaterialTheme.colorScheme.onPrimaryContainer
-                    else
+                    } else {
                         MaterialTheme.colorScheme.onSurface
+                    }
                 }
             )
             Text(
                 text = title,
                 fontSize = 14.sp,
-                color = if (useColoredBackground)
+                color = if (useColoredBackground) {
                     MaterialTheme.colorScheme.onPrimaryContainer
-                else
+                } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
         }
     }
@@ -207,16 +159,15 @@ fun DetailedTransactionItem(transaction: Transaction) {
     val isCredit = transaction.isCredit()
     val amountColor = if (isCredit) Color(0xFF4CAF50) else Color(0xFFE53935)
     val amountPrefix = if (isCredit) "+" else "-"
-    val backgroundColor = if (isCredit)
-        Color(0xFF4CAF50).copy(alpha = 0.1f)
-    else
-        Color(0xFFE53935).copy(alpha = 0.1f)
+    val backgroundColor = if (isCredit) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color(0xFFE53935).copy(alpha = 0.1f)
     val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = backgroundColor)
+        colors = CardDefaults.cardColors(
+            containerColor = backgroundColor
+        )
     ) {
         Column(
             modifier = Modifier
@@ -230,6 +181,7 @@ fun DetailedTransactionItem(transaction: Transaction) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Transaction type icon - Down arrow for credit, Up arrow for debit
                     Surface(
                         shape = MaterialTheme.shapes.small,
                         color = amountColor.copy(alpha = 0.2f),
@@ -263,6 +215,7 @@ fun DetailedTransactionItem(transaction: Transaction) {
                     }
                 }
 
+                // Sync status
                 Icon(
                     Icons.Default.CheckCircle,
                     contentDescription = "Synced",
@@ -306,9 +259,12 @@ fun DetailedTransactionItem(transaction: Transaction) {
                 }
             }
 
+            // Show transaction ID if not auto-generated
             if (!transaction.transactionId.startsWith("T")) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = "UPI Ref:",
                         fontSize = 12.sp,
