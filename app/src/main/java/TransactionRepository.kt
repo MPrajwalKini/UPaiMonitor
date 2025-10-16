@@ -1,122 +1,144 @@
 package com.example.upaimonitor
 
-import android.content.Context
 import android.util.Log
+import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class TransactionRepository(context: Context) {
+class TransactionRepository(private val transactionDao: TransactionDao) {
 
-    private val dao = AppDatabase.getInstance(context).transactionDao()
-
-    // LiveData bridge between background receiver and UI ViewModel
-    val newTransactionLiveData = MutableLiveData<Transaction?>()
+    // LiveData for notifying when new transactions are detected
+    private val _newTransactionLiveData = MutableLiveData<Transaction?>()
+    val newTransactionLiveData: LiveData<Transaction?> = _newTransactionLiveData
 
     /**
-     * Inserts a transaction into Room DB.
-     * Replaces existing transaction if IDs match (safe write).
+     * Retrieves all transactions from the database
+     */
+    suspend fun getAll(): List<Transaction> {
+        return try {
+            transactionDao.getAll()
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error fetching all transactions", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Inserts a transaction into the database
      */
     suspend fun insert(transaction: Transaction) {
-        dao.insert(transaction)
+        try {
+            transactionDao.insert(transaction)
+            Log.d("TransactionRepository", "Transaction inserted: ${transaction.transactionId}")
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error inserting transaction", e)
+        }
     }
 
     /**
-     * Safely insert a transaction only if it doesn't already exist.
-     * Prevents duplicate SMS transactions.
+     * Inserts a transaction only if it doesn't already exist
      */
     suspend fun insertIfNotExists(transaction: Transaction) {
-        val exists = dao.exists(transaction.transactionId)
-        if (exists == 0) {
-            dao.insert(transaction)
-            Log.d("TransactionRepository", "Inserted new transaction: ${transaction.transactionId}")
-        } else {
-            Log.d("TransactionRepository", "Skipped duplicate transaction: ${transaction.transactionId}")
-        }
-    }
-
-    /**
-     * Check if a transaction is a duplicate based on amount, type, and timestamp proximity.
-     * Returns true if a similar transaction exists within 60 seconds.
-     */
-    suspend fun isDuplicateTransaction(transaction: Transaction): Boolean {
-        val allTransactions = dao.getAll()
-        return allTransactions.any { existing ->
-            // Consider it duplicate if amount, type match and timestamps are within 60 seconds
-            existing.amount == transaction.amount &&
-                    existing.transactionType == transaction.transactionType &&
-                    areTimestampsClose(existing.timestamp, transaction.timestamp, 60000)
-        }
-    }
-
-    /**
-     * Helper function to check if two timestamps are close (within threshold)
-     */
-    private fun areTimestampsClose(timestamp1: String, timestamp2: String, thresholdMillis: Long): Boolean {
-        return try {
-            val format = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-            val date1 = format.parse(timestamp1)
-            val date2 = format.parse(timestamp2)
-            if (date1 != null && date2 != null) {
-                Math.abs(date1.time - date2.time) <= thresholdMillis
+        try {
+            val existsCount = transactionDao.exists(transaction.transactionId)
+            if (existsCount == 0) {
+                transactionDao.insert(transaction)
+                _newTransactionLiveData.postValue(transaction)
+                Log.d("TransactionRepository", "New transaction inserted: ${transaction.transactionId}")
             } else {
-                false
+                Log.d("TransactionRepository", "Transaction already exists: ${transaction.transactionId}")
             }
         } catch (e: Exception) {
-            Log.e("TransactionRepository", "Error parsing timestamps", e)
+            Log.e("TransactionRepository", "Error in insertIfNotExists", e)
+        }
+    }
+
+    /**
+     * Checks if a transaction exists by ID
+     */
+    suspend fun isDuplicateTransaction(transaction: Transaction): Boolean {
+        return try {
+            val existsCount = transactionDao.exists(transaction.transactionId)
+            existsCount > 0
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error checking duplicate", e)
             false
         }
     }
 
     /**
-     * Loads all stored transactions from the database.
-     */
-    suspend fun getAll(): List<Transaction> {
-        return dao.getAll()
-    }
-
-    /**
-     * Called from SmsReceiver or DebugHelper to notify the UI.
-     */
-    fun postNewTransaction(transaction: Transaction) {
-        newTransactionLiveData.postValue(transaction)
-        Log.d("TransactionRepository", "New transaction posted to LiveData: ${transaction.transactionId}")
-    }
-
-    /**
-     * Clears the LiveData after the MainActivity has consumed it.
+     * Clears the new transaction LiveData
      */
     fun clearNewTransaction() {
-        newTransactionLiveData.postValue(null)
+        _newTransactionLiveData.value = null
     }
 
     /**
-     * Removes duplicate transactions from the database.
-     * Keeps the first occurrence and deletes subsequent duplicates.
+     * Removes duplicate transactions from the database
+     * Keeps only the most recent transaction for each unique ID
      */
     suspend fun removeDuplicates(): Int {
-        val allTransactions = dao.getAll()
-        val toDelete = mutableListOf<Transaction>()
-        val seen = mutableListOf<Transaction>()
+        return try {
+            val allTransactions = transactionDao.getAll()
+            val seenIds = mutableSetOf<String>()
+            var removedCount = 0
 
-        for (transaction in allTransactions) {
-            val isDuplicate = seen.any { existing ->
-                existing.amount == transaction.amount &&
-                        existing.transactionType == transaction.transactionType &&
-                        areTimestampsClose(existing.timestamp, transaction.timestamp, 60000)
+            for (transaction in allTransactions) {
+                if (seenIds.contains(transaction.transactionId)) {
+                    transactionDao.delete(transaction)
+                    removedCount++
+                    Log.d("TransactionRepository", "Removed duplicate: ${transaction.transactionId}")
+                } else {
+                    seenIds.add(transaction.transactionId)
+                }
             }
 
-            if (isDuplicate) {
-                toDelete.add(transaction)
-            } else {
-                seen.add(transaction)
-            }
+            Log.d("TransactionRepository", "Total duplicates removed: $removedCount")
+            removedCount
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error removing duplicates", e)
+            0
         }
+    }
 
-        // Delete duplicates
-        toDelete.forEach { dao.delete(it) }
+    /**
+     * Deletes a specific transaction
+     */
+    suspend fun deleteTransaction(transaction: Transaction) {
+        try {
+            transactionDao.delete(transaction)
+            Log.d("TransactionRepository", "Transaction deleted: ${transaction.transactionId}")
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error deleting transaction", e)
+        }
+    }
 
-        Log.d("TransactionRepository", "Removed ${toDelete.size} duplicate transactions")
-        return toDelete.size
+    /**
+     * Clears all transactions from the database
+     */
+    suspend fun clearAllTransactions() {
+        try {
+            transactionDao.clearAll()
+            Log.d("TransactionRepository", "All transactions cleared")
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error clearing all transactions", e)
+        }
+    }
+
+    /**
+     * Gets transactions for a specific date
+     */
+    suspend fun getTransactionsByDate(date: String): List<Transaction> {
+        return try {
+            val allTransactions = transactionDao.getAll()
+            allTransactions.filter { it.timestamp.contains(date) }
+        } catch (e: Exception) {
+            Log.e("TransactionRepository", "Error fetching transactions by date", e)
+            emptyList()
+        }
     }
 }

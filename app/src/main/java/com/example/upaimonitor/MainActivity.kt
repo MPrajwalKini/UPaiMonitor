@@ -33,39 +33,14 @@ import androidx.compose.material.icons.filled.CheckCircle
 import android.content.Context
 import androidx.compose.ui.platform.LocalContext
 import android.widget.Toast
-//import java.text.SimpleDateFormat
-//import java.util.*
-
-// Helper: checks if a transaction timestamp is from today
-//fun isToday(timestamp: String): Boolean {
-//    return try {
-//        val formats = listOf(
-//            SimpleDateFormat("MMM dd yyyy, hh:mm a", Locale.getDefault()),
-//            SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault()),
-//            SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault())
-//        )
-//
-//        val transactionDate = formats.firstNotNullOfOrNull { fmt ->
-//            runCatching { fmt.parse(timestamp) }.getOrNull()
-//        } ?: return false
-//
-//        val today = Calendar.getInstance()
-//        val txnCalendar = Calendar.getInstance().apply { time = transactionDate }
-//
-//        today.get(Calendar.YEAR) == txnCalendar.get(Calendar.YEAR) &&
-//                today.get(Calendar.DAY_OF_YEAR) == txnCalendar.get(Calendar.DAY_OF_YEAR)
-//    } catch (e: Exception) {
-//        false
-//    }
-//}
-
-
 
 // Navigation sealed class
 sealed class Screen {
     object Dashboard : Screen()
     object Transactions : Screen()
     object SmsMonitors : Screen()
+    object ManageDuplicates : Screen()
+    object Settings : Screen()
 }
 
 class MainActivity : ComponentActivity() {
@@ -135,13 +110,25 @@ fun AppContent(viewModel: TransactionViewModel) {
             Screen.Dashboard -> UPaiDashboard(
                 transactions = transactions,
                 onTransactionsClick = { currentScreen = Screen.Transactions },
-                onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors }
+                onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors },
+                onManageDuplicatesClick = { currentScreen = Screen.ManageDuplicates },
+                onSettingsClick = { currentScreen = Screen.Settings }
             )
             Screen.Transactions -> TransactionsScreen(
                 transactions = transactions,
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
             Screen.SmsMonitors -> SmsMonitorScreen(
+                onBackClick = { currentScreen = Screen.Dashboard }
+            )
+            Screen.ManageDuplicates -> ManageDuplicatesScreen(
+                transactions = transactions,
+                onBackClick = { currentScreen = Screen.Dashboard },
+                onTransactionsDeleted = {
+                    viewModel.loadTransactions()
+                }
+            )
+            Screen.Settings -> SettingsScreen(
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
         }
@@ -178,23 +165,15 @@ fun PermissionScreen(onGrant: () -> Unit) {
 fun UPaiDashboard(
     transactions: List<Transaction>,
     onTransactionsClick: () -> Unit,
-    onSmsMonitorsClick: () -> Unit
+    onSmsMonitorsClick: () -> Unit,
+    onManageDuplicatesClick: () -> Unit,
+    onSettingsClick: () -> Unit
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    // Persisted state
     var monitoringActive by remember {
         mutableStateOf(prefs.getBoolean("monitoring_active", false))
-    }
-
-    // Automatically register or unregister based on saved preference
-    LaunchedEffect(monitoringActive) {
-        if (monitoringActive) {
-            SmsReceiver.register(context)
-        } else {
-            SmsReceiver.unregister(context)
-        }
     }
 
     Scaffold(
@@ -202,7 +181,7 @@ fun UPaiDashboard(
             TopAppBar(
                 title = { Text("UPai Dashboard") },
                 actions = {
-                    IconButton(onClick = { /* Settings action */ }) {
+                    IconButton(onClick = onSettingsClick) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
@@ -223,10 +202,8 @@ fun UPaiDashboard(
                     prefs.edit().putBoolean("monitoring_active", isActive).apply()
 
                     if (isActive) {
-                        SmsReceiver.register(context)
                         Toast.makeText(context, "Monitoring enabled", Toast.LENGTH_SHORT).show()
                     } else {
-                        SmsReceiver.unregister(context)
                         Toast.makeText(context, "Monitoring disabled", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -237,7 +214,8 @@ fun UPaiDashboard(
             Spacer(modifier = Modifier.height(16.dp))
             QuickActions(
                 onTransactionsClick = onTransactionsClick,
-                onSmsMonitorsClick = onSmsMonitorsClick
+                onSmsMonitorsClick = onSmsMonitorsClick,
+                onManageDuplicatesClick = onManageDuplicatesClick
             )
             Spacer(modifier = Modifier.height(16.dp))
             RecentTransactions(transactions)
@@ -252,7 +230,7 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (monitoringActive) {
-                Color(0xFF4CAF50).copy(alpha = 0.1f) // Light green when active
+                Color(0xFF4CAF50).copy(alpha = 0.1f)
             } else {
                 MaterialTheme.colorScheme.surfaceVariant
             }
@@ -269,7 +247,6 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
-                // Status indicator icon
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = if (monitoringActive) Color(0xFF4CAF50) else Color.Gray,
@@ -315,12 +292,11 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
 
 @Composable
 fun DashboardSummary(transactions: List<Transaction>) {
-    // Calculate net total: credits (+) minus debits (-)
     val totalAmount = transactions.sumOf { transaction ->
         if (transaction.isCredit()) {
-            transaction.amount  // Add credits
+            transaction.amount
         } else {
-            -transaction.amount  // Subtract debits
+            -transaction.amount
         }
     }
 
@@ -380,7 +356,11 @@ fun SummaryCard(
 }
 
 @Composable
-fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit) {
+fun QuickActions(
+    onTransactionsClick: () -> Unit,
+    onSmsMonitorsClick: () -> Unit,
+    onManageDuplicatesClick: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -405,6 +385,13 @@ fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit
                     Text("SMS Monitors")
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = onManageDuplicatesClick,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Manage Duplicates")
+            }
         }
     }
 }
@@ -423,44 +410,12 @@ fun RecentTransactions(transactions: List<Transaction>) {
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(transactions.sortedByDescending { it.transactionId }.take(5), key = { it.transactionId }) { transaction ->
-                TransactionItem(transaction)
+                    TransactionItem(transaction)
                 }
             }
         }
     }
 }
-
-//@Composable
-//fun RecentTransactions(transactions: List<Transaction>) {
-//    // Filter only today's transactions
-//    val todayTransactions = transactions.filter { transaction ->
-//        isToday(transaction.timestamp)
-//    }
-//
-//    Column(modifier = Modifier.fillMaxWidth()) {
-//        Text(
-//            "Today's Transactions",
-//            fontWeight = FontWeight.Bold,
-//            style = MaterialTheme.typography.titleLarge
-//        )
-//        Spacer(modifier = Modifier.height(8.dp))
-//
-//        if (todayTransactions.isEmpty()) {
-//            Text(
-//                "No transactions today.",
-//                color = Color.Gray,
-//                style = MaterialTheme.typography.bodyMedium
-//            )
-//        } else {
-//            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-//                items(todayTransactions.take(5), key = { it.transactionId }) { transaction ->
-//                    TransactionItem(transaction)
-//                }
-//            }
-//        }
-//    }
-//}
-
 
 @Composable
 fun TransactionItem(transaction: Transaction) {
@@ -530,7 +485,9 @@ fun DefaultPreview() {
         UPaiDashboard(
             transactions = dummyTransactions,
             onTransactionsClick = {},
-            onSmsMonitorsClick = {}
+            onSmsMonitorsClick = {},
+            onManageDuplicatesClick = {},
+            onSettingsClick = {}
         )
     }
 }

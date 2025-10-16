@@ -1,6 +1,9 @@
 package com.example.upaimonitor
 
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 object DebugHelper {
     fun simulateSMS(sender: String, body: String) {
@@ -15,8 +18,11 @@ object DebugHelper {
                 timestamp = System.currentTimeMillis().toString(),
                 message = body
             )
-            MyApp.repository.postNewTransaction(transaction)
-            Log.d("DebugHelper", "Simulated transaction: $transaction")
+            // Insert transaction asynchronously
+            CoroutineScope(Dispatchers.IO).launch {
+                MyApp.repository.insertIfNotExists(transaction)
+                Log.d("DebugHelper", "Simulated transaction inserted: $transaction")
+            }
         } else {
             Log.d("DebugHelper", "Invalid simulated SMS: $body")
         }

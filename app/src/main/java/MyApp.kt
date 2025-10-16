@@ -23,7 +23,8 @@ class MyApp : Application() {
 
             // Initialize Room database + repository
             val db = AppDatabase.getInstance(this)
-            repository = TransactionRepository(this)
+            val transactionDao = db.transactionDao()
+            repository = TransactionRepository(transactionDao)
 
             // Optional: Preload transactions into memory cache if desired
             CoroutineScope(Dispatchers.IO).launch {

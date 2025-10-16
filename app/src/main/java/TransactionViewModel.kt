@@ -15,10 +15,7 @@ class TransactionViewModel(private val repository: TransactionRepository = MyApp
     private var lastRefreshDate: String = ""
 
     init {
-        repository.allTransactionsLiveData.observeForever { list ->
-            _transactions.value = list.sortedByDescending { it.timestamp }
-            Log.d("TransactionViewModel", "Transactions updated: ${list.size}")
-        }
+        loadTransactions()
         refreshIfNewDay()
     }
 
@@ -34,23 +31,45 @@ class TransactionViewModel(private val repository: TransactionRepository = MyApp
 
     fun loadTransactions() {
         viewModelScope.launch {
-            val list = repository.getAll()
-            _transactions.value = list.sortedByDescending { it.timestamp }
-            Log.d("TransactionViewModel", "Loaded ${list.size} transactions from DB")
+            try {
+                val list = repository.getAll()
+                _transactions.value = list.sortedByDescending { it.transactionId }
+                Log.d("TransactionViewModel", "Loaded ${list.size} transactions from DB")
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error loading transactions", e)
+            }
         }
     }
 
     fun addNewTransaction(transaction: Transaction) {
         viewModelScope.launch {
-            repository.insertIfNotExists(transaction)
+            try {
+                repository.insertIfNotExists(transaction)
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error adding transaction", e)
+            }
         }
     }
 
     fun removeDuplicates() {
-        viewModelScope.launch { repository.removeDuplicates() }
+        viewModelScope.launch {
+            try {
+                repository.removeDuplicates()
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error removing duplicates", e)
+            }
+        }
     }
 
     fun clearAllTransactions() {
-        viewModelScope.launch { repository.clearAllTransactions() }
+        viewModelScope.launch {
+            try {
+                repository.clearAllTransactions()
+                _transactions.value = emptyList()
+                Log.d("TransactionViewModel", "All transactions cleared")
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error clearing transactions", e)
+            }
+        }
     }
 }
