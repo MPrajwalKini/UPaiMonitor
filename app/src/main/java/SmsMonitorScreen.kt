@@ -24,9 +24,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.util.Log
 
-private const val TAG = "SmsMonitorScreen"
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SmsMonitorScreen(onBackClick: () -> Unit) {
@@ -39,44 +37,18 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
     var selectedSenders by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showManualInput by remember { mutableStateOf(false) }
     var manualInput by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Observe the monitored senders stored in SharedPreferences
+    // 👇 Observe the monitored senders stored in SharedPreferences
     val monitoredIds by SmsMonitorManager.monitoredIds.collectAsState()
 
-    // Function to scan SMS with error handling
+    // Function to scan SMS
     fun scanSms() {
-        Log.d(TAG, "Scan button clicked")
-
-        if (!smsPermissionState.status.isGranted) {
-            Log.e(TAG, "SMS permission not granted")
-            errorMessage = "SMS permission is required to scan messages"
-            return
-        }
-
         scope.launch {
-            try {
-                isScanning = true
-                errorMessage = null
-                Log.d(TAG, "Starting SMS scan...")
-
-                val senders = withContext(Dispatchers.IO) {
-                    SmsScanner.scanBankingSenders(context)
-                }
-
-                Log.d(TAG, "Scan completed. Found ${senders.size} senders")
-                detectedSenders = senders
-
-                if (senders.isEmpty()) {
-                    errorMessage = "No banking SMS senders found in your messages"
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error scanning SMS", e)
-                errorMessage = "Error scanning SMS: ${e.message}"
-            } finally {
-                isScanning = false
+            isScanning = true
+            detectedSenders = withContext(Dispatchers.IO) {
+                SmsScanner.scanBankingSenders(context)
             }
-
+            isScanning = false
         }
     }
 
@@ -146,26 +118,6 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Show error message if any
-            errorMessage?.let { error ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            error,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
             // Show monitored IDs first
             if (monitoredIds.isNotEmpty()) {
                 Text(
