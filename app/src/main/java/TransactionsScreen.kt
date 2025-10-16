@@ -16,14 +16,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.*
+import kotlinx.coroutines.flow.StateFlow
+import androidx.compose.runtime.collectAsState
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionsScreen(
-    transactions: List<Transaction>,
+    transactionsFlow: StateFlow<List<Transaction>>, // Reactive transactions
     onBackClick: () -> Unit
 ) {
-    // Filter transactions for current month only
+    // Collect transactions from StateFlow
+    val transactions by transactionsFlow.collectAsState()
+
+    // Filter transactions for current month
     val currentMonthTransactions = remember(transactions) {
         DateFilterHelper.filterCurrentMonthTransactions(transactions)
     }
@@ -59,11 +66,7 @@ fun TransactionsScreen(
         ) {
             // Summary Cards with Net Total for current month
             val netTotal = currentMonthTransactions.sumOf { transaction ->
-                if (transaction.isCredit()) {
-                    transaction.amount  // Add credits
-                } else {
-                    -transaction.amount  // Subtract debits
-                }
+                if (transaction.isCredit()) transaction.amount else -transaction.amount
             }
 
             val totalColor = if (netTotal >= 0) Color(0xFF4CAF50) else Color(0xFFE53935)
@@ -120,7 +123,9 @@ fun TransactionsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(
-                        currentMonthTransactions.sortedByDescending { it.transactionId },
+                        currentMonthTransactions.sortedByDescending {
+                            DateFilterHelper.parseTimestamp(it.timestamp)?.time ?: 0L
+                        },
                         key = { it.transactionId }
                     ) { transaction ->
                         DetailedTransactionItem(transaction)
@@ -130,7 +135,6 @@ fun TransactionsScreen(
         }
     }
 }
-
 @Composable
 fun TransactionSummaryCard(
     title: String,
@@ -142,11 +146,8 @@ fun TransactionSummaryCard(
         modifier = Modifier.size(width = 160.dp, height = 90.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (useColoredBackground) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerLow
-            }
+            containerColor = if (useColoredBackground) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
         Column(
@@ -161,21 +162,15 @@ fun TransactionSummaryCard(
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (valueColor != Color.Unspecified) valueColor else {
-                    if (useColoredBackground) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    }
+                    if (useColoredBackground) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurface
                 }
             )
             Text(
                 text = title,
                 fontSize = 14.sp,
-                color = if (useColoredBackground) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                color = if (useColoredBackground) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -189,38 +184,30 @@ fun DetailedTransactionItem(transaction: Transaction) {
     val backgroundColor = if (isCredit) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color(0xFFE53935).copy(alpha = 0.1f)
     val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
 
+    val parsedDate = DateFilterHelper.parseTimestamp(transaction.timestamp)
+    val parsedTime = parsedDate?.time ?: 0L
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = backgroundColor
-        )
+        colors = CardDefaults.cardColors(containerColor = backgroundColor)
     ) {
-        Column(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth()
-        ) {
-            // Header row with amount and icon
+        Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Transaction type icon
-                    Surface(
-                        shape = MaterialTheme.shapes.small,
+                    Surface(shape = MaterialTheme.shapes.small,
                         color = amountColor.copy(alpha = 0.2f),
-                        modifier = Modifier.size(48.dp)
-                    ) {
+                        modifier = Modifier.size(48.dp)) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = arrowIcon,
-                                contentDescription = if (isCredit) "Credit" else "Debit",
-                                tint = amountColor,
-                                modifier = Modifier.size(32.dp)
-                            )
+                            Icon(arrowIcon, contentDescription = if (isCredit) "Credit" else "Debit",
+                                tint = amountColor, modifier = Modifier.size(32.dp))
                         }
                     }
 
@@ -228,7 +215,7 @@ fun DetailedTransactionItem(transaction: Transaction) {
 
                     Column {
                         Text(
-                            text = "$amountPrefix₹${transaction.amount}",
+                            text = "$amountPrefix₹${"%.2f".format(transaction.amount)}",
                             color = amountColor,
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold
@@ -242,68 +229,39 @@ fun DetailedTransactionItem(transaction: Transaction) {
                     }
                 }
 
-                // Sync status
-                Icon(
-                    Icons.Default.CheckCircle,
+                Icon(Icons.Default.CheckCircle,
                     contentDescription = "Synced",
                     tint = if (transaction.isSynced) Color(0xFF4CAF50) else Color.Gray,
-                    modifier = Modifier.size(20.dp)
-                )
+                    modifier = Modifier.size(20.dp))
             }
 
             Spacer(modifier = Modifier.height(12.dp))
             HorizontalDivider(color = amountColor.copy(alpha = 0.2f))
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Details section
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text(
-                        text = if (isCredit) "From:" else "To:",
-                        fontSize = 12.sp,
-                        color = Color.Gray
-                    )
-                    Text(
-                        text = transaction.sender,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text(text = if (isCredit) "From:" else "To:", fontSize = 12.sp, color = Color.Gray)
+                    Text(text = transaction.sender, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Date:",
-                        fontSize = 12.sp,
-                        color = Color.Gray
-                    )
-                    Text(
-                        text = transaction.timestamp,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text(text = "Date:", fontSize = 12.sp, color = Color.Gray)
+                    Text(text = transaction.timestamp, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
             }
 
-            // Show transaction ID if not auto-generated
             if (!transaction.transactionId.startsWith("T")) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "UPI Ref:",
-                        fontSize = 12.sp,
-                        color = Color.Gray
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "UPI Ref:", fontSize = 12.sp, color = Color.Gray)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = transaction.transactionId,
+                    Text(text = transaction.transactionId,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
-                    )
+                        fontWeight = FontWeight.Medium)
                 }
             }
 
@@ -311,19 +269,10 @@ fun DetailedTransactionItem(transaction: Transaction) {
                 Spacer(modifier = Modifier.height(12.dp))
                 HorizontalDivider(color = amountColor.copy(alpha = 0.2f))
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Message:",
-                    fontSize = 12.sp,
-                    color = Color.Gray,
-                    fontWeight = FontWeight.Bold
-                )
+                Text(text = "Message:", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = transaction.message,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 18.sp
-                )
+                Text(text = transaction.message, fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 18.sp)
             }
         }
     }

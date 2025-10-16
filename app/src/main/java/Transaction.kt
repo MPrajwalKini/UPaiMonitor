@@ -17,12 +17,18 @@ data class Transaction(
     val timestamp: String = formatTimestamp(System.currentTimeMillis()),
     val message: String = "",
     val isSynced: Boolean = false,
-    val transactionType: String = TransactionType.DEBIT.name
+    val transactionType: String = TransactionType.DEBIT.name,
+    val rawTimestamp: Long = System.currentTimeMillis()
 ) {
     fun isCredit() = transactionType == TransactionType.CREDIT.name
     fun isDebit() = transactionType == TransactionType.DEBIT.name
-    fun getType(): TransactionType = try { TransactionType.valueOf(transactionType) } catch (e: Exception) { TransactionType.DEBIT }
+    fun getType(): TransactionType = try {
+        TransactionType.valueOf(transactionType)
+    } catch (e: Exception) {
+        TransactionType.DEBIT
+    }
 }
+
 
 // --- Timestamp formatting ---
 fun formatTimestamp(timeInMillis: Long): String {

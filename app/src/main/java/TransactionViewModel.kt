@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import android.util.Log
+import java.text.SimpleDateFormat
+import java.util.*
 
 class TransactionViewModel(private val repository: TransactionRepository = MyApp.repository) : ViewModel() {
 
@@ -33,7 +35,15 @@ class TransactionViewModel(private val repository: TransactionRepository = MyApp
         viewModelScope.launch {
             try {
                 val list = repository.getAll()
-                _transactions.value = list.sortedByDescending { it.transactionId }
+
+                // Sort by parsing timestamp string using DateFilterHelper (newest first)
+                _transactions.value = list.sortedByDescending { transaction ->
+                    val parsed = DateFilterHelper.parseTimestamp(transaction.timestamp)
+                    val timeMillis = parsed?.time ?: 0L
+                    Log.d("TransactionViewModel", "${transaction.timestamp} -> $timeMillis (${Date(timeMillis)})")
+                    timeMillis
+                }
+
                 Log.d("TransactionViewModel", "Loaded ${list.size} transactions from DB")
             } catch (e: Exception) {
                 Log.e("TransactionViewModel", "Error loading transactions", e)
@@ -45,6 +55,8 @@ class TransactionViewModel(private val repository: TransactionRepository = MyApp
         viewModelScope.launch {
             try {
                 repository.insertIfNotExists(transaction)
+                // Reload to maintain correct sort order
+                loadTransactions()
             } catch (e: Exception) {
                 Log.e("TransactionViewModel", "Error adding transaction", e)
             }
@@ -55,6 +67,8 @@ class TransactionViewModel(private val repository: TransactionRepository = MyApp
         viewModelScope.launch {
             try {
                 repository.removeDuplicates()
+                // Reload after removing duplicates
+                loadTransactions()
             } catch (e: Exception) {
                 Log.e("TransactionViewModel", "Error removing duplicates", e)
             }

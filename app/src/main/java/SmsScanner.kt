@@ -175,14 +175,24 @@ object SmsScanner {
      * Extracts the bank name from sender ID
      * Used by SmsReceiver to get clean bank identifier
      */
-    fun extractBankSender(senderId: String): String {
-        return identifyBank(senderId)
+    fun extractBankSender(address: String): String {
+        val upper = address.uppercase()
+        for ((_, identifiers) in BANK_NAMES) {
+            for (id in identifiers) {
+                if (upper.contains(id)) {
+                    return id // "CANBNK", "HDFCBK", etc.
+                }
+            }
+        }
+        return upper.takeLast(6) // fallback
     }
+
+
 
     /**
      * Identifies the bank name from sender ID
      */
-    private fun identifyBank(senderId: String): String {
+    fun identifyBank(senderId: String): String {
         val upperSenderId = senderId.uppercase()
 
         for ((bankName, identifiers) in BANK_NAMES) {

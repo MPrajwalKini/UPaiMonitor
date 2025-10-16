@@ -12,30 +12,22 @@ import kotlinx.coroutines.launch
 
 class SmsReceiver : BroadcastReceiver() {
 
-    /**
-     * Extract UPI reference number from SMS
-     */
     private fun extractUpiReference(message: String): String? {
-        try {
-            val patterns = listOf(
-                """UPI\s*Ref(?:\s*No)?[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
-                """UPI/(\d+)""".toRegex(),
-                """Ref(?:\s*No)?[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
-                """UTR[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
-                """Transaction\s*ID[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
-                """Txn\s*(?:ID|No)[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE)
-            )
-
-            for (pattern in patterns) {
-                val matchResult = pattern.find(message)
-                if (matchResult != null) {
-                    val ref = matchResult.groupValues[1]
-                    Log.d("SmsReceiver", "Found UPI reference: $ref")
-                    return "UPI$ref"
-                }
+        val patterns = listOf(
+            """UPI\s*Ref(?:\s*No)?[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
+            """UPI/(\d+)""".toRegex(),
+            """Ref(?:\s*No)?[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
+            """UTR[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
+            """Transaction\s*ID[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE),
+            """Txn\s*(?:ID|No)[:\s]*(\d+)""".toRegex(RegexOption.IGNORE_CASE)
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(message)
+            if (match != null) {
+                val ref = match.groupValues[1]
+                Log.d("SmsReceiver", "Found UPI reference: $ref")
+                return "UPI$ref"
             }
-        } catch (e: Exception) {
-            Log.e("SmsReceiver", "Error extracting UPI reference", e)
         }
         return null
     }
@@ -44,13 +36,12 @@ class SmsReceiver : BroadcastReceiver() {
         if (intent.action != "android.provider.Telephony.SMS_RECEIVED") return
 
         val pendingResult = goAsync()
-
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val bundle: Bundle? = intent.extras
                 val pdus = bundle?.get("pdus") as? Array<*>
                 if (pdus == null) {
-                    Log.e("SmsReceiver", "SMS bundle is null or pdus is wrong type")
+                    Log.e("SmsReceiver", "SMS bundle is null or pdus invalid")
                     return@launch
                 }
 
@@ -58,72 +49,74 @@ class SmsReceiver : BroadcastReceiver() {
                     SmsMessage.createFromPdu(pdus[i] as ByteArray, bundle.getString("format"))
                 }
 
-                val messageBody = buildString {
-                    for (msg in messages) append(msg?.messageBody)
-                }
-
+                val messageBody = buildString { for (msg in messages) append(msg?.messageBody) }
                 val firstMessage = messages.firstOrNull()
                 val sender = firstMessage?.displayOriginatingAddress ?: "Unknown"
                 val timestamp = firstMessage?.timestampMillis ?: System.currentTimeMillis()
 
-                // Normalize the sender to core bank ID
-                val normalizedSender = SmsScanner.run {
-                    extractBankSender(normalizeAddress(sender))
-                }
+                val normalizedSender = SmsScanner.extractBankSender(SmsScanner.normalizeAddress(sender))
+                Log.d("SmsReceiver", "Received SMS from $sender (full: $normalizedSender, bank: ${SmsScanner.identifyBank(normalizedSender)}): $messageBody")
 
-                Log.d("SmsReceiver", "Received SMS from $sender (normalized: $normalizedSender): $messageBody")
-
-                // Filter only messages from monitored senders
+                // Only process monitored senders
                 val monitored = SmsMonitorManager.getMonitorsSynchronously(context)
-                val bankCode = SmsScanner.extractBankSender(normalizedSender)
-
-                if (monitored.none { bankCode.contains(it, ignoreCase = true) || it.contains(bankCode, ignoreCase = true) }) {
-                    Log.d("SmsReceiver", "Sender $sender (normalized: $bankCode) not in monitored list. Ignored.")
+                val fullNormalizedSender = SmsScanner.normalizeAddress(sender) // "AXCANBNKS"
+                if (monitored.none { it.equals(fullNormalizedSender, ignoreCase = true) }) {
+                    Log.d("SmsReceiver", "Sender $sender (normalized: $fullNormalizedSender) not in monitored list. Ignored.")
                     return@launch
                 }
 
-                // Extract amount and transaction type
-                val regex = Regex("""(?i)(credited|debited|paid|sent|received|transfer).*?(?:Rs\.?|₹|INR|XOF)\s*([\d,]+(?:\.\d{1,2})?)""")
-                val match = regex.find(messageBody)
 
-                val amount = match?.groupValues?.get(2)?.replace(",", "")?.toDoubleOrNull() ?: 0.0
+                // Amount extraction
+                val amountRegex = """(?:Rs\.?|₹|INR|XOF)\s*([\d,]+(?:\.\d{1,2})?)""".toRegex()
+                val typeRegex = """(?i)\b(credited|debited|paid|sent|received|transfer)\b""".toRegex()
 
-                // Determine transaction type based on keyword
-                val typeKeyword = match?.groupValues?.get(1)?.lowercase() ?: ""
-                val type = if (typeKeyword.contains("credit") || typeKeyword.contains("received") || typeKeyword.contains("transfer")) {
-                    "CREDIT"
-                } else if (typeKeyword.contains("debit") || typeKeyword.contains("paid") || typeKeyword.contains("sent")) {
-                    "DEBIT"
-                } else {
-                    Log.d("SmsReceiver", "Could not determine transaction type. Skipping.")
+                val amountMatch = amountRegex.find(messageBody)
+                val typeMatch = typeRegex.find(messageBody)
+
+                val amount = amountMatch?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull() ?: 0.0
+                val typeKeyword = typeMatch?.value?.lowercase() ?: ""
+
+                if (amount <= 0) {
+                    Log.d("SmsReceiver", "Amount could not be determined. Skipping.")
                     return@launch
+                }
+
+                val type = when {
+                    typeKeyword.contains("credit") || typeKeyword.contains("received") -> "CREDIT"
+                    typeKeyword.contains("debit") || typeKeyword.contains("paid") || typeKeyword.contains("sent") -> "DEBIT"
+                    else -> {
+                        Log.d("SmsReceiver", "Transaction type could not be determined. Skipping.")
+                        return@launch
+                    }
                 }
 
                 val upiRef = extractUpiReference(messageBody)
+                // Use unique ID to avoid conflicts
+                val transactionId = upiRef ?: "T${timestamp}_${System.nanoTime()}"
 
-                Log.d("SmsReceiver", "Amount: $amount, UPI Ref: $upiRef, Type: $type")
+                val transaction = Transaction(
+                    transactionId = transactionId,
+                    amount = amount,
+                    sender = normalizedSender,
+                    timestamp = formatTimestamp(timestamp),
+                    message = messageBody,
+                    transactionType = type
+                )
 
-                if (amount > 0) {
-                    val transactionId = upiRef ?: "T${timestamp}"
-
-                    val transaction = Transaction(
-                        transactionId = transactionId,
-                        amount = amount, // ✅ Always positive - type stored separately
-                        sender = normalizedSender,
-                        timestamp = formatTimestamp(timestamp),
-                        message = messageBody,
-                        transactionType = type // ✅ Fixed field name
-                    )
-
-                    MyApp.repository.insertIfNotExists(transaction) // ✅ Correct method name
-                    Log.d("SmsReceiver", "Transaction added: $transaction")
-                }
+                Log.d("SmsReceiver", "Parsed transaction: $transaction")
+                MyApp.repository.insertIfNotExists(transaction)
 
             } catch (e: Exception) {
-                Log.e("SmsReceiver", "Error reading/processing SMS", e)
+                Log.e("SmsReceiver", "Error processing SMS", e)
             } finally {
                 pendingResult.finish()
             }
         }
+    }
+
+    private fun formatTimestamp(timestamp: Long): String {
+        val date = java.util.Date(timestamp)
+        val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        return format.format(date)
     }
 }

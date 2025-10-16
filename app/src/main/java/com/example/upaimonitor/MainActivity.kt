@@ -115,7 +115,7 @@ fun AppContent(viewModel: TransactionViewModel) {
                 onSettingsClick = { currentScreen = Screen.Settings }
             )
             Screen.Transactions -> TransactionsScreen(
-                transactions = transactions,
+                transactionsFlow = viewModel.transactions,
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
             Screen.SmsMonitors -> SmsMonitorScreen(
@@ -396,7 +396,6 @@ fun QuickActions(
     }
 }
 
-// Option 1: If your Transaction class has timestampMillis field
 @Composable
 fun RecentTransactions(transactions: List<Transaction>) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -406,24 +405,12 @@ fun RecentTransactions(transactions: List<Transaction>) {
             style = MaterialTheme.typography.titleLarge
         )
         Spacer(modifier = Modifier.height(8.dp))
+
         if (transactions.isEmpty()) {
             Text("No transactions found yet. Add SMS monitors to start tracking.")
         } else {
-            // Sort by transactionId which contains timestamp (T{timestamp})
-            // Extract the numeric part after 'T' or 'UPI'
-            val sortedTransactions = transactions.sortedByDescending { transaction ->
-                try {
-                    // Extract timestamp from ID like "T1697123456789" or "UPI123456789"
-                    val idNumber = transaction.transactionId
-                        .removePrefix("T")
-                        .removePrefix("UPI")
-                        .filter { it.isDigit() }
-                        .toLongOrNull() ?: 0L
-                    idNumber
-                } catch (e: Exception) {
-                    0L
-                }
-            }.take(5)
+            // Sort by rawTimestamp (newest first)
+            val sortedTransactions = transactions.sortedByDescending { it.rawTimestamp }.take(5)
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(sortedTransactions, key = { it.transactionId }) { transaction ->
@@ -440,7 +427,9 @@ fun TransactionItem(transaction: Transaction) {
     val amountColor = if (isCredit) Color.Green else Color.Red
     val amountPrefix = if (isCredit) "+" else "-"
     val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
-    val arrowTint = if (isCredit) Color.Green else Color.Red
+
+    // Use rawTimestamp to get the correct date
+    val displayTimestamp = formatTimestamp(transaction.rawTimestamp)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -466,7 +455,7 @@ fun TransactionItem(transaction: Transaction) {
                     color = Color.Gray
                 )
                 Text(
-                    text = transaction.timestamp,
+                    text = displayTimestamp,
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -474,12 +463,14 @@ fun TransactionItem(transaction: Transaction) {
             Icon(
                 imageVector = arrowIcon,
                 contentDescription = if (isCredit) "Credit" else "Debit",
-                tint = arrowTint,
+                tint = amountColor,
                 modifier = Modifier.size(32.dp)
             )
         }
     }
 }
+
+
 
 @Preview(showBackground = true)
 @Composable
