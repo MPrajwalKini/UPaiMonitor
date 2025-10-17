@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    id("kotlin-kapt") // Needed for Room compiler
+    id("kotlin-kapt") //Needed for Room compiler
 }
 
 android {
@@ -63,7 +63,7 @@ dependencies {
     implementation("androidx.compose.runtime:runtime-livedata:1.7.0")
 
     // --- Room Persistence Library ---
-    val room_version = "2.8.2"
+    val room_version = "2.6.1"
     implementation("androidx.room:room-runtime:$room_version")
     implementation("androidx.room:room-ktx:$room_version")
     kapt("androidx.room:room-compiler:$room_version")
@@ -80,4 +80,8 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+// core coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+// for Android
 }
