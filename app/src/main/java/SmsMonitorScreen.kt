@@ -38,7 +38,7 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
     var showManualInput by remember { mutableStateOf(false) }
     var manualInput by remember { mutableStateOf("") }
 
-    // 👇 Observe the monitored senders stored in SharedPreferences
+    // Observe the monitored senders stored in SharedPreferences
     val monitoredIds by SmsMonitorManager.monitoredIds.collectAsState()
 
     // Function to scan SMS
@@ -247,7 +247,7 @@ fun SmsMonitorScreen(onBackClick: () -> Unit) {
             title = { Text("Add Sender Manually") },
             text = {
                 Column {
-                    Text("Enter the SMS sender ID (e.g., AX-HDFCBK)")
+                    Text("Enter the SMS sender ID (e.g., AXHDFCBK)")
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = manualInput,

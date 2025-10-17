@@ -181,7 +181,7 @@ object DateFilterHelper {
                         val now = Calendar.getInstance()
                         cal.set(Calendar.YEAR, now.get(Calendar.YEAR))
 
-                        // 🔥 Smart adjustment:
+                        // Smart adjustment:
                         // If parsed date is "in the future" (e.g., Dec 31 parsed in Jan),
                         // it probably belongs to the *previous year*.
                         if (cal.after(now)) {
@@ -197,7 +197,7 @@ object DateFilterHelper {
             }
         }
 
-        Log.w("DateFilterHelper", "❌ Could not parse timestamp: $timestamp")
+        Log.w("DateFilterHelper", "Could not parse timestamp: $timestamp")
         return null
     }
 
