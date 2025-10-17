@@ -2,7 +2,6 @@ package com.example.upaimonitor
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -19,7 +18,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.room.Dao
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManageDuplicatesScreen(
@@ -87,7 +86,7 @@ fun ManageDuplicatesScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            "No duplicate transactions found! 🎉",
+                            "No duplicate transactions found!",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -166,7 +165,7 @@ fun ManageDuplicatesScreen(
                             withContext(Dispatchers.IO) {
                                 selectedTransactions.forEach { txId ->
                                     val tx = transactions.find { it.transactionId == txId }
-                                    tx?.let { MyApp.repository.dao.delete(it) }
+                                    tx?.let { MyApp.repository.deleteTransaction(it) }
                                 }
                             }
                             isDeleting = false
