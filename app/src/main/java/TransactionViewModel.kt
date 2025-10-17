@@ -2,114 +2,88 @@ package com.example.upaimonitor
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.room.Entity
-import androidx.room.PrimaryKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import android.util.Log
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
-// --- Transaction Type Enum ---
-enum class TransactionType {
-    DEBIT,   // Money sent/spent
-    CREDIT   // Money received
-}
-
-// --- Transaction Data Class (Room Entity Compatible) ---
-@Entity(tableName = "transactions")
-data class Transaction(
-    @PrimaryKey val transactionId: String = "T${System.currentTimeMillis()}",
-    val amount: Double,
-    val sender: String,
-    val timestamp: String = formatTimestamp(System.currentTimeMillis()),
-    val message: String = "",
-    val isSynced: Boolean = false,
-    val transactionType: String = TransactionType.DEBIT.name // Store as String for Room
-) {
-    /**
-     * Check if this is a credit (money received) transaction
-     */
-    fun isCredit(): Boolean = transactionType == TransactionType.CREDIT.name
-
-    /**
-     * Check if this is a debit (money sent) transaction
-     */
-    fun isDebit(): Boolean = transactionType == TransactionType.DEBIT.name
-
-    /**
-     * Get the transaction type as enum
-     */
-    fun getType(): TransactionType {
-        return try {
-            TransactionType.valueOf(transactionType)
-        } catch (e: Exception) {
-            TransactionType.DEBIT // Default fallback
-        }
-    }
-}
-
-// --- Helper function for timestamp formatting ---
-fun formatTimestamp(timeInMillis: Long): String {
-    val date = Date(timeInMillis)
-    val format = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-    return format.format(date)
-}
-
-/**
- * Detect transaction type from SMS message
- */
-fun detectTransactionType(message: String): TransactionType {
-    val creditKeywords = listOf(
-        "credited", "received", "deposited", "added",
-        "refund", "cashback", "reward", "credit"
-    )
-
-    val debitKeywords = listOf(
-        "debited", "spent", "paid", "withdrawn",
-        "deducted", "debit", "payment", "purchase"
-    )
-
-    val messageLower = message.lowercase()
-
-    // Check credit keywords first
-    if (creditKeywords.any { messageLower.contains(it) }) {
-        return TransactionType.CREDIT
-    }
-
-    // Check debit keywords
-    if (debitKeywords.any { messageLower.contains(it) }) {
-        return TransactionType.DEBIT
-    }
-
-    // Default to debit if unclear
-    return TransactionType.DEBIT
-}
-
-// --- ViewModel to Manage Transaction State ---
-class TransactionViewModel : ViewModel() {
+class TransactionViewModel(private val repository: TransactionRepository = MyApp.repository) : ViewModel() {
 
     private val _transactions = MutableStateFlow<List<Transaction>>(emptyList())
     val transactions = _transactions.asStateFlow()
 
+    private var lastRefreshDate: String = ""
+
     init {
         loadTransactions()
+        refreshIfNewDay()
     }
 
-    /** Loads all transactions from the database at startup */
-    fun loadTransactions() {
+    fun refreshIfNewDay() {
         viewModelScope.launch {
-            val storedTransactions = MyApp.repository.getAll()
-            _transactions.value = storedTransactions
+            val today = DateFilterHelper.getTodayFormatted()
+            if (lastRefreshDate != today) {
+                lastRefreshDate = today
+                loadTransactions()
+            }
         }
     }
 
-    /** Adds a new transaction both to DB and in-memory list */
+    fun loadTransactions() {
+        viewModelScope.launch {
+            try {
+                val list = repository.getAll()
+
+                // Sort by parsing timestamp string using DateFilterHelper (newest first)
+                _transactions.value = list.sortedByDescending { transaction ->
+                    val parsed = DateFilterHelper.parseTimestamp(transaction.timestamp)
+                    val timeMillis = parsed?.time ?: 0L
+                    Log.d("TransactionViewModel", "${transaction.timestamp} -> $timeMillis (${Date(timeMillis)})")
+                    timeMillis
+                }
+
+                Log.d("TransactionViewModel", "Loaded ${list.size} transactions from DB")
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error loading transactions", e)
+            }
+        }
+    }
+
     fun addNewTransaction(transaction: Transaction) {
         viewModelScope.launch {
-            MyApp.repository.insert(transaction)
-            _transactions.value = listOf(transaction) + _transactions.value
+            try {
+                repository.insertIfNotExists(transaction)
+                // Reload to maintain correct sort order
+                loadTransactions()
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error adding transaction", e)
+            }
+        }
+    }
+
+    fun removeDuplicates() {
+        viewModelScope.launch {
+            try {
+                repository.removeDuplicates()
+                // Reload after removing duplicates
+                loadTransactions()
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error removing duplicates", e)
+            }
+        }
+    }
+
+    fun clearAllTransactions() {
+        viewModelScope.launch {
+            try {
+                repository.clearAllTransactions()
+                _transactions.value = emptyList()
+                Log.d("TransactionViewModel", "All transactions cleared")
+            } catch (e: Exception) {
+                Log.e("TransactionViewModel", "Error clearing transactions", e)
+            }
         }
     }
 }
