@@ -30,39 +30,9 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import java.text.SimpleDateFormat
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import androidx.compose.ui.platform.LocalContext
-import java.util.*
-import android.widget.Toast
 import android.content.Context
-
-// Helper: checks if a transaction timestamp is from today
-//fun isToday(timestamp: String): Boolean {
-//    return try {
-//        val formats = listOf(
-//            SimpleDateFormat("MMM dd yyyy, hh:mm a", Locale.getDefault()),
-//            SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault()),
-//            SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault())
-//        )
-//
-//        val transactionDate = formats.firstNotNullOfOrNull { fmt ->
-//            runCatching { fmt.parse(timestamp) }.getOrNull()
-//        } ?: return false
-//
-//        val today = Calendar.getInstance()
-//        val txnCalendar = Calendar.getInstance().apply { time = transactionDate }
-//
-//        today.get(Calendar.YEAR) == txnCalendar.get(Calendar.YEAR) &&
-//                today.get(Calendar.DAY_OF_YEAR) == txnCalendar.get(Calendar.DAY_OF_YEAR)
-//    } catch (e: Exception) {
-//        false
-//    }
-//}
-
-
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 
 // Navigation sealed class
 sealed class Screen {
@@ -70,6 +40,7 @@ sealed class Screen {
     object Transactions : Screen()
     object SmsMonitors : Screen()
     object ManageDuplicates : Screen()
+    object Settings : Screen()
 }
 
 class MainActivity : ComponentActivity() {
@@ -140,28 +111,31 @@ fun AppContent(viewModel: TransactionViewModel) {
                 transactions = transactions,
                 onTransactionsClick = { currentScreen = Screen.Transactions },
                 onSmsMonitorsClick = { currentScreen = Screen.SmsMonitors },
-                onManageDuplicatesClick = { currentScreen = Screen.ManageDuplicates }  // Add this
+                onManageDuplicatesClick = { currentScreen = Screen.ManageDuplicates },
+                onSettingsClick = { currentScreen = Screen.Settings }
             )
             Screen.Transactions -> TransactionsScreen(
-                transactions = transactions,
+                transactionsFlow = viewModel.transactions,
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
             Screen.SmsMonitors -> SmsMonitorScreen(
                 onBackClick = { currentScreen = Screen.Dashboard }
             )
-            Screen.ManageDuplicates -> ManageDuplicatesScreen(  // Add this block
+            Screen.ManageDuplicates -> ManageDuplicatesScreen(
                 transactions = transactions,
                 onBackClick = { currentScreen = Screen.Dashboard },
                 onTransactionsDeleted = {
                     viewModel.loadTransactions()
                 }
             )
+            Screen.Settings -> SettingsScreen(
+                onBackClick = { currentScreen = Screen.Dashboard }
+            )
         }
     } else {
         PermissionScreen(onGrant = { smsPermissionState.launchPermissionRequest() })
     }
 }
-
 
 @Composable
 fun PermissionScreen(onGrant: () -> Unit) {
@@ -192,20 +166,23 @@ fun UPaiDashboard(
     transactions: List<Transaction>,
     onTransactionsClick: () -> Unit,
     onSmsMonitorsClick: () -> Unit,
-    onManageDuplicatesClick: () -> Unit
+    onManageDuplicatesClick: () -> Unit,
+    onSettingsClick: () -> Unit
 ) {
-    var monitoringActive by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    var monitoringActive by remember {
+        mutableStateOf(prefs.getBoolean("monitoring_active", false))
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("UPai Dashboard") },
                 actions = {
-                    IconButton(onClick = { /* Settings action */ }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings"
-                        )
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
             )
@@ -220,39 +197,31 @@ fun UPaiDashboard(
         ) {
             MonitoringCard(
                 monitoringActive = monitoringActive,
-                onCheckedChange = { monitoringActive = it }
+                onCheckedChange = { isActive ->
+                    monitoringActive = isActive
+                    prefs.edit().putBoolean("monitoring_active", isActive).apply()
+
+                    if (isActive) {
+                        Toast.makeText(context, "Monitoring enabled", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Monitoring disabled", Toast.LENGTH_SHORT).show()
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
-
             DashboardSummary(transactions)
-
             Spacer(modifier = Modifier.height(16.dp))
-
             QuickActions(
                 onTransactionsClick = onTransactionsClick,
-                onSmsMonitorsClick = onSmsMonitorsClick
+                onSmsMonitorsClick = onSmsMonitorsClick,
+                onManageDuplicatesClick = onManageDuplicatesClick
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Manage Duplicates Button
-            OutlinedButton(
-                onClick = onManageDuplicatesClick,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Manage Duplicate Transactions")
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
             RecentTransactions(transactions)
         }
     }
-
 }
-
 
 @Composable
 fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit) {
@@ -261,7 +230,7 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (monitoringActive) {
-                Color(0xFF4CAF50).copy(alpha = 0.1f) // Light green when active
+                Color(0xFF4CAF50).copy(alpha = 0.1f)
             } else {
                 MaterialTheme.colorScheme.surfaceVariant
             }
@@ -278,7 +247,6 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
-                // Status indicator icon
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = if (monitoringActive) Color(0xFF4CAF50) else Color.Gray,
@@ -324,12 +292,11 @@ fun MonitoringCard(monitoringActive: Boolean, onCheckedChange: (Boolean) -> Unit
 
 @Composable
 fun DashboardSummary(transactions: List<Transaction>) {
-    // Calculate net total: credits (+) minus debits (-)
     val totalAmount = transactions.sumOf { transaction ->
         if (transaction.isCredit()) {
-            transaction.amount  // Add credits
+            transaction.amount
         } else {
-            -transaction.amount  // Subtract debits
+            -transaction.amount
         }
     }
 
@@ -389,7 +356,11 @@ fun SummaryCard(
 }
 
 @Composable
-fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit) {
+fun QuickActions(
+    onTransactionsClick: () -> Unit,
+    onSmsMonitorsClick: () -> Unit,
+    onManageDuplicatesClick: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -414,6 +385,13 @@ fun QuickActions(onTransactionsClick: () -> Unit, onSmsMonitorsClick: () -> Unit
                     Text("SMS Monitors")
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = onManageDuplicatesClick,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Manage Duplicates")
+            }
         }
     }
 }
@@ -427,11 +405,15 @@ fun RecentTransactions(transactions: List<Transaction>) {
             style = MaterialTheme.typography.titleLarge
         )
         Spacer(modifier = Modifier.height(8.dp))
+
         if (transactions.isEmpty()) {
             Text("No transactions found yet. Add SMS monitors to start tracking.")
         } else {
+            // Sort by rawTimestamp (newest first)
+            val sortedTransactions = transactions.sortedByDescending { it.rawTimestamp }.take(5)
+
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(transactions.take(5), key = { it.transactionId }) { transaction ->
+                items(sortedTransactions, key = { it.transactionId }) { transaction ->
                     TransactionItem(transaction)
                 }
             }
@@ -439,45 +421,15 @@ fun RecentTransactions(transactions: List<Transaction>) {
     }
 }
 
-//@Composable
-//fun RecentTransactions(transactions: List<Transaction>) {
-//    // 🕒 Filter only today's transactions
-//    val todayTransactions = transactions.filter { transaction ->
-//        isToday(transaction.timestamp)
-//    }
-//
-//    Column(modifier = Modifier.fillMaxWidth()) {
-//        Text(
-//            "Today's Transactions",
-//            fontWeight = FontWeight.Bold,
-//            style = MaterialTheme.typography.titleLarge
-//        )
-//        Spacer(modifier = Modifier.height(8.dp))
-//
-//        if (todayTransactions.isEmpty()) {
-//            Text(
-//                "No transactions today.",
-//                color = Color.Gray,
-//                style = MaterialTheme.typography.bodyMedium
-//            )
-//        } else {
-//            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-//                items(todayTransactions.take(5), key = { it.transactionId }) { transaction ->
-//                    TransactionItem(transaction)
-//                }
-//            }
-//        }
-//    }
-//}
-
-
 @Composable
 fun TransactionItem(transaction: Transaction) {
     val isCredit = transaction.isCredit()
     val amountColor = if (isCredit) Color.Green else Color.Red
     val amountPrefix = if (isCredit) "+" else "-"
     val arrowIcon = if (isCredit) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown
-    val arrowTint = if (isCredit) Color.Green else Color.Red
+
+    // Use rawTimestamp to get the correct date
+    val displayTimestamp = formatTimestamp(transaction.rawTimestamp)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -503,7 +455,7 @@ fun TransactionItem(transaction: Transaction) {
                     color = Color.Gray
                 )
                 Text(
-                    text = transaction.timestamp,
+                    text = displayTimestamp,
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -511,12 +463,14 @@ fun TransactionItem(transaction: Transaction) {
             Icon(
                 imageVector = arrowIcon,
                 contentDescription = if (isCredit) "Credit" else "Debit",
-                tint = arrowTint,
+                tint = amountColor,
                 modifier = Modifier.size(32.dp)
             )
         }
     }
 }
+
+
 
 @Preview(showBackground = true)
 @Composable
@@ -540,7 +494,8 @@ fun DefaultPreview() {
             transactions = dummyTransactions,
             onTransactionsClick = {},
             onSmsMonitorsClick = {},
-            onManageDuplicatesClick = {}  // Add this
+            onManageDuplicatesClick = {},
+            onSettingsClick = {}
         )
     }
 }
