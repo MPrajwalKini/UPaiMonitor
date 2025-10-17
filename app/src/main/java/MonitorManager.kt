@@ -55,6 +55,7 @@ object MonitorManager {
 
     /** Clear only user-added senders; predefined bank senders remain */
     fun clearUserSenders(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove(KEY_SENDERS).apply()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().remove(KEY_SENDERS).apply()
     }
 }
